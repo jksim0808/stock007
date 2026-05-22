@@ -314,41 +314,6 @@ header_cols[6].markdown("**차트 작동**")
 
 st.markdown("<hr style='margin: 5px 0 10px 0;'>", unsafe_allow_html=True)
 
-if not df_top30.empty:
-    for idx, row in df_top30.iterrows():
-        is_selected = st.session_state.get('selected_stock') == row['Symbol']
-        
-        cols = st.columns([1, 2, 2, 2, 3, 2, 2])
-        cols[0].write(f"**{row['Rank']}위**")
-        cols[1].markdown(f"**{row['Name']}** <span style='font-size:11px; color:#64748b;'>{row['Symbol']}</span>", unsafe_allow_html=True)
-        cols[2].write(f"**{int(row['Close']):,} 원**")
-        
-        # 상승/하락 컬러 포맷
-        change_color = "#ef4444" if row['ChgRate'] >= 0 else "#2563eb"
-        change_sign = "+" if row['ChgRate'] >= 0 else ""
-        cols[3].markdown(f"<span style='color:{change_color}; font-weight:bold;'>{change_sign}{row['ChgRate']:.2f}%</span>", unsafe_allow_html=True)
-        
-        # 거래대금 포맷 (억 단위 변환)
-        amount_in_billion = row['Amount'] / 100000000.0
-        cols[4].write(f"{amount_in_billion:,.1f} 억 원")
-        
-        # 예측 상승률 표시
-        pred_color = "#ea580c" if row['Predicted_Growth'] >= 0 else "#2563eb"
-        pred_sign = "+" if row['Predicted_Growth'] >= 0 else ""
-        cols[5].markdown(f"<span style='color:{pred_color}; font-weight:bold;'>{pred_sign}{row['Predicted_Growth']:.1f}%</span>", unsafe_allow_html=True)
-        
-        # 차트 작동 버튼
-        btn_label = "👉 선택됨" if is_selected else "👁️ 차트 보기"
-        btn_type = "primary" if is_selected else "secondary"
-        
-        if cols[6].button(btn_label, key=f"btn_{row['Symbol']}", type=btn_type):
-            st.session_state['selected_stock'] = row['Symbol']
-            st.session_state['selected_stock_name'] = row['Name']
-            st.rerun()
-else:
-    st.info("실시간 시장 데이터 동기화 과정에 지연이 발생하고 있습니다.")
-
-st.markdown("---")
 
 # -----------------------------------------------------------------------------
 # 3 ZONE: 선택된 주 종목 실시간 차트 연동 연출 (KST)
