@@ -136,8 +136,8 @@ try:
         on_select="rerun"
     )
 
-   # -----------------------------------------------------------------------------
-    # [섹션 4] 종목 클릭 시 일일 진행 차트 시각화 (이미지 스타일 적용)
+ # -----------------------------------------------------------------------------
+    # [섹션 4] 종목 클릭 시 일일 진행 차트 시각화 (종목별 가격 범위 동적 맞춤)
     # -----------------------------------------------------------------------------
     st.markdown("---")
     
@@ -153,7 +153,7 @@ try:
         target_change = output_df.iloc[selected_idx]['전일비교 상승비율']
         target_vol = output_df.iloc[selected_idx]['거래대금(백만)']
         
-        # 상단 헤더 디자인 (첨부 이미지 스타일)
+        # 상단 헤더 디자인
         st.markdown(f"""
         <div style='padding: 10px 0; border-bottom: 1px solid #ddd; margin-bottom: 15px;'>
             <span style='font-size: 20px; font-weight: bold;'>{target_name}</span> 
@@ -171,28 +171,34 @@ try:
         
         with st.spinner("차트 데이터를 불러오는 중입니다..."):
             stock_ticker = yf.Ticker(ticker_symbol)
-            hist = stock_ticker.history(period="1d", interval="1m") # 1일, 1분봉으로 변경
+            hist = stock_ticker.history(period="1d", interval="1m")
             
             if not hist.empty:
                 hist.index = hist.index.tz_convert('Asia/Seoul')
                 
-                # 라인 차트 생성
+                # Y축 상하단 여백을 위해 종목의 당일 최고/최저가 계산
+                min_price = hist['Close'].min()
+                max_price = hist['Close'].max()
+                # 위아래로 약간의 여백(약 10%)을 주어 차트가 답답해 보이지 않게 설정
+                price_margin = (max_price - min_price) * 0.1
+                if price_margin == 0: # 가격 변동이 아예 없는 경우 방어코드
+                    price_margin = min_price * 0.01 
+                
+                # 라인 차트 생성 (fill 옵션 제거하여 Y축이 0으로 가는 현상 방지)
                 fig_stock = go.Figure()
                 fig_stock.add_trace(go.Scatter(
                     x=hist.index,
                     y=hist['Close'],
                     mode='lines',
-                    line=dict(color='#4c6198', width=1.5), # 이미지와 비슷한 푸른색 라인
-                    fill='tozeroy', # 라인 아래 채우기
-                    fillcolor='rgba(76, 97, 152, 0.05)', # 매우 연한 푸른색 배경
+                    line=dict(color='#4c6198', width=1.5),
                     name="현재가"
                 ))
                 
-                # 차트 레이아웃 설정 (밝은 테마, 우측 Y축)
+                # 차트 레이아웃 설정
                 fig_stock.update_layout(
-                    template="plotly_white", # 밝은 배경
+                    template="plotly_white",
                     height=500,
-                    margin=dict(l=10, r=50, t=20, b=20),
+                    margin=dict(l=10, r=60, t=20, b=20),
                     xaxis=dict(
                         showgrid=True,
                         gridcolor='#f0f0f0',
@@ -200,15 +206,17 @@ try:
                         type='date'
                     ),
                     yaxis=dict(
-                        side='right', # Y축을 오른쪽으로 이동
+                        side='right',
                         showgrid=True,
                         gridcolor='#f0f0f0',
-                        tickformat=',' # 천단위 콤마
+                        tickformat=',',
+                        # 계산된 최고/최저가 범위로 Y축 강제 고정
+                        range=[min_price - price_margin, max_price + price_margin] 
                     ),
                     hovermode='x unified'
                 )
                 
-                # 현재가(마지막 종가)를 나타내는 우측 태그 추가 (이미지 우측 하단 파란색 박스 느낌)
+                # 우측 현재가 박스 태그
                 last_price = hist['Close'].iloc[-1]
                 fig_stock.add_annotation(
                     x=hist.index[-1],
@@ -216,20 +224,13 @@ try:
                     text=f"{int(last_price):,}",
                     showarrow=True,
                     arrowcolor='rgba(0,0,0,0)',
-                    ax=40, ay=0,
+                    ax=45, ay=0,
                     xanchor='left',
                     font=dict(color="white", size=11),
                     bgcolor="#4c6198",
                     bordercolor="#4c6198",
                     borderwidth=1,
-                    borderpad=3
+                    borderpad=4
                 )
 
                 st.plotly_chart(fig_stock, use_container_width=True)
-            else:
-                st.warning("Yahoo Finance에서 해당 종목의 당일 1분봉 데이터를 제공하지 않습니다.")
-    else:
-        st.warning("현재 스크리닝된 상승 종목이 없습니다.")
-
-except Exception as e:
-    st.error(f"데이터를 불러오는 중 오류가 발생했습니다: {e}")
