@@ -130,7 +130,6 @@ st.markdown("---")
 # -----------------------------------------------------------------------------
 st.subheader("🎯 단타 타겟 Top 30 (우량주 매력도 점수 랭킹 순)")
 
-# 여기서부터 들여쓰기를 모두 수정하고 try 구문을 완전히 제거했습니다.
 df_universe = get_realtime_target_stocks()
 
 cond_price = df_universe['현재가'] >= 10000
@@ -191,4 +190,75 @@ if not output_df.empty:
         <span style='font-size: 14px; color: #888;'>시</span> <span style='font-size: 14px;'>-</span>
         <span style='font-size: 14px; color: #888;'>고</span> <span style='font-size: 14px;'>-</span>
         <span style='font-size: 14px; color: #888;'>저</span> <span style='font-size: 14px;'>-</span>
-        <span
+        <span style='font-size: 14px; color: #888;'>종</span> <span style='font-size: 14px; font-weight: bold;'>{target_price}</span>
+        <span style='font-size: 14px; color: #e12929; margin-left: 5px;'>{target_change}</span>
+        <span style='font-size: 14px; color: #888; margin-left: 10px;'>거(대금) {target_vol}백만</span>
+        <span style='float: right; font-size: 12px; color: #999; margin-top: 5px;'>한국거래소({target_market})</span>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    ticker_symbol = f"{target_code}.KS" if 'KOSPI' in target_market else f"{target_code}.KQ"
+    
+    with st.spinner("차트 데이터를 불러오는 중입니다..."):
+        stock_ticker = yf.Ticker(ticker_symbol)
+        hist = stock_ticker.history(period="1d", interval="1m")
+        
+        if not hist.empty:
+            hist.index = hist.index.tz_convert('Asia/Seoul')
+            
+            min_price = hist['Close'].min()
+            max_price = hist['Close'].max()
+            price_margin = (max_price - min_price) * 0.1
+            if price_margin == 0: 
+                price_margin = min_price * 0.01 
+            
+            fig_stock = go.Figure()
+            fig_stock.add_trace(go.Scatter(
+                x=hist.index,
+                y=hist['Close'],
+                mode='lines',
+                line=dict(color='#4c6198', width=1.5),
+                name="현재가"
+            ))
+            
+            fig_stock.update_layout(
+                template="plotly_white",
+                height=500,
+                margin=dict(l=10, r=60, t=20, b=20),
+                xaxis=dict(
+                    showgrid=True,
+                    gridcolor='#f0f0f0',
+                    rangeslider_visible=False,
+                    type='date'
+                ),
+                yaxis=dict(
+                    side='right',
+                    showgrid=True,
+                    gridcolor='#f0f0f0',
+                    tickformat=',',
+                    range=[min_price - price_margin, max_price + price_margin] 
+                ),
+                hovermode='x unified'
+            )
+            
+            last_price = hist['Close'].iloc[-1]
+            fig_stock.add_annotation(
+                x=hist.index[-1],
+                y=last_price,
+                text=f"{int(last_price):,}",
+                showarrow=True,
+                arrowcolor='rgba(0,0,0,0)',
+                ax=45, ay=0,
+                xanchor='left',
+                font=dict(color="white", size=11),
+                bgcolor="#4c6198",
+                bordercolor="#4c6198",
+                borderwidth=1,
+                borderpad=4
+            )
+
+            st.plotly_chart(fig_stock, use_container_width=True)
+        else:
+            st.warning("Yahoo Finance에서 해당 종목의 당일 1분봉 데이터를 제공하지 않습니다.")
+else:
+    st.warning("현재 스크리닝된 상승 종목이 없습니다.")
