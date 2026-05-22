@@ -129,4 +129,123 @@ try:
     filtered_df = df_universe[cond_price & cond_rise & cond_sidecar].copy()
     
     # 예측 스코어 로직 변경: 상승률보다 '뭉칫돈(거래대금)'에 가중치를 더 많이 부여 (삼아알미늄 등 포착 용도)
-    filtered_df['예측_상승_Score'] = (filtered_df['등락률'] * 0.4 + np.log1p(filtered_df['거래
+    filtered_df['예측_상승_Score'] = (filtered_df['등락률'] * 0.4 + np.log1p(filtered_df['거래대금']) * 0.6)
+    
+    top_30 = filtered_df.sort_values(by='예측_상승_Score', ascending=False).head(30)
+    
+    output_df = pd.DataFrame({
+        '종목명': top_30['종목명'],
+        '종목코드': top_30['종목코드'],
+        '시장': top_30['시장'],
+        '현재가': top_30['현재가'].apply(lambda x: f"{int(x):,} 원"),
+        '전일대비 상승률': top_30['등락률'].apply(lambda x: f"+{x:.2f} %"),
+        '거래대금(백만)': top_30['거래대금'].apply(lambda x: f"{int(x):,}")
+    }).reset_index(drop=True)
+
+    st.markdown("💡 **표에서 관심 있는 종목의 행을 클릭**하시면 하단에 1분봉 추세 차트가 렌더링 됩니다.")
+    
+    selected_rows = st.dataframe(
+        output_df, 
+        use_container_width=True, 
+        selection_mode="single-row",
+        on_select="rerun"
+    )
+
+    # -----------------------------------------------------------------------------
+    # [섹션 4] 종목 클릭 시 1분봉 시각화 (종목별 가격 범위 동적 맞춤)
+    # -----------------------------------------------------------------------------
+    st.markdown("---")
+    
+    selected_idx = 0
+    if selected_rows and len(selected_rows.get("selection", {}).get("rows", [])) > 0:
+        selected_idx = selected_rows["selection"]["rows"][0]
+
+    if not output_df.empty:
+        target_code = output_df.iloc[selected_idx]['종목코드']
+        target_name = output_df.iloc[selected_idx]['종목명']
+        target_market = output_df.iloc[selected_idx]['시장']
+        target_price = output_df.iloc[selected_idx]['현재가']
+        target_change = output_df.iloc[selected_idx]['전일대비 상승률']
+        target_vol = output_df.iloc[selected_idx]['거래대금(백만)']
+        
+        st.markdown(f"""
+        <div style='padding: 10px 0; border-bottom: 1px solid #ddd; margin-bottom: 15px;'>
+            <span style='font-size: 20px; font-weight: bold;'>{target_name}</span> 
+            <span style='font-size: 14px; color: #888;'>시</span> <span style='font-size: 14px;'>-</span>
+            <span style='font-size: 14px; color: #888;'>고</span> <span style='font-size: 14px;'>-</span>
+            <span style='font-size: 14px; color: #888;'>저</span> <span style='font-size: 14px;'>-</span>
+            <span style='font-size: 14px; color: #888;'>종</span> <span style='font-size: 14px; font-weight: bold;'>{target_price}</span>
+            <span style='font-size: 14px; color: #e12929; margin-left: 5px;'>{target_change}</span>
+            <span style='font-size: 14px; color: #888; margin-left: 10px;'>거(대금) {target_vol}백만</span>
+            <span style='float: right; font-size: 12px; color: #999; margin-top: 5px;'>한국거래소({target_market})</span>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        ticker_symbol = f"{target_code}.KS" if 'KOSPI' in target_market else f"{target_code}.KQ"
+        
+        with st.spinner("차트 데이터를 불러오는 중입니다..."):
+            stock_ticker = yf.Ticker(ticker_symbol)
+            hist = stock_ticker.history(period="1d", interval="1m")
+            
+            if not hist.empty:
+                hist.index = hist.index.tz_convert('Asia/Seoul')
+                
+                min_price = hist['Close'].min()
+                max_price = hist['Close'].max()
+                price_margin = (max_price - min_price) * 0.1
+                if price_margin == 0: 
+                    price_margin = min_price * 0.01 
+                
+                fig_stock = go.Figure()
+                fig_stock.add_trace(go.Scatter(
+                    x=hist.index,
+                    y=hist['Close'],
+                    mode='lines',
+                    line=dict(color='#4c6198', width=1.5),
+                    name="현재가"
+                ))
+                
+                fig_stock.update_layout(
+                    template="plotly_white",
+                    height=500,
+                    margin=dict(l=10, r=60, t=20, b=20),
+                    xaxis=dict(
+                        showgrid=True,
+                        gridcolor='#f0f0f0',
+                        rangeslider_visible=False,
+                        type='date'
+                    ),
+                    yaxis=dict(
+                        side='right',
+                        showgrid=True,
+                        gridcolor='#f0f0f0',
+                        tickformat=',',
+                        range=[min_price - price_margin, max_price + price_margin] 
+                    ),
+                    hovermode='x unified'
+                )
+                
+                last_price = hist['Close'].iloc[-1]
+                fig_stock.add_annotation(
+                    x=hist.index[-1],
+                    y=last_price,
+                    text=f"{int(last_price):,}",
+                    showarrow=True,
+                    arrowcolor='rgba(0,0,0,0)',
+                    ax=45, ay=0,
+                    xanchor='left',
+                    font=dict(color="white", size=11),
+                    bgcolor="#4c6198",
+                    bordercolor="#4c6198",
+                    borderwidth=1,
+                    borderpad=4
+                )
+
+                st.plotly_chart(fig_stock, use_container_width=True)
+            else:
+                st.warning("Yahoo Finance에서 해당 종목의 당일 1분봉 데이터를 제공하지 않습니다.")
+    else:
+        st.warning("현재 스크리닝된 상승 종목이 없습니다.")
+
+except Exception as e:
+    st.error(f"데이터를 불러오는 중 오류가 발생했습니다: {e}")
