@@ -302,17 +302,6 @@ if 'selected_stock' not in st.session_state and not df_top30.empty:
     st.session_state['selected_stock'] = df_top30.iloc[0]['Symbol']
     st.session_state['selected_stock_name'] = df_top30.iloc[0]['Name']
 
-# 표 헤더 렌더링 (불필요한 타사 표는 모두 폐지 및 단일 결합)
-header_cols = st.columns([1, 2, 2, 2, 3, 2, 2])
-header_cols[0].markdown("**순위**")
-header_cols[1].markdown("**종목명 (코드)**")
-header_cols[2].markdown("**현재가**")
-header_cols[3].markdown("**실시간 상승률**")
-header_cols[4].markdown("**당일 거래대금**")
-header_cols[5].markdown("**금일 상승 예측**")
-header_cols[6].markdown("**차트 작동**")
-
-st.markdown("<hr style='margin: 5px 0 10px 0;'>", unsafe_allow_html=True)
 
 
 # -----------------------------------------------------------------------------
