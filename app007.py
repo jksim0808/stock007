@@ -14,7 +14,7 @@ st.title("🚀 실시간 단타 및 시장 동향 대시보드")
 KST = timezone(timedelta(hours=9))
 
 # -----------------------------------------------------------------------------
-# 1. 데이터 로드 함수 (네이버 스크래핑 -> KRX 전 종목 데이터로 전면 교체)
+# 1. 데이터 로드 함수 (수정된 안정적인 KRX 크롤링 방식)
 # -----------------------------------------------------------------------------
 @st.cache_data(ttl=60)
 def get_market_indices():
@@ -29,28 +29,42 @@ def get_market_indices():
 
 @st.cache_data(ttl=30)
 def get_realtime_target_stocks():
-    """KRX 전체 종목을 훑어서 누락되는 주도주가 없게 세팅 (거래대금 중심)"""
-    # fdr을 통해 국내 코스피/코스닥 2,700여 개 전 종목 리스트 확보
-    df_all = fdr.StockListing('KRX')
+    """안정적인 KRX 전체 종목 시세 가져오기 (컬럼 에러 방어 로직 적용)"""
+    # 1. KRX 전 종목 리스트 가져오기
+    df_krx = fdr.StockListing('KRX')
     
-    # 단타에 필요한 핵심 데이터만 추출
-    df_all = df_all[['Name', 'Code', 'Market', 'Close', 'ChgRate', 'Amount']].copy()
+    # 2. 버전에 따라 다르게 넘어오는 컬럼명(ChgRate vs FluctuationRate 등)에 대한 유연한 대처
+    # '등락률'을 의미하는 컬럼을 찾아서 매핑
+    chg_col = 'ChgRate' if 'ChgRate' in df_krx.columns else 'FluctuationRate' if 'FluctuationRate' in df_krx.columns else '등락률'
+    # '거래대금'을 의미하는 컬럼을 찾아서 매핑
+    amt_col = 'Amount' if 'Amount' in df_krx.columns else 'TradingValue' if 'TradingValue' in df_krx.columns else '거래대금'
     
-    # 컬럼명 직관적으로 변경
-    df_all.rename(columns={
+    # 만약 위의 컬럼들도 없다면, 최소한의 작동을 위해 빈 데이터프레임 반환
+    if chg_col not in df_krx.columns or amt_col not in df_krx.columns:
+        st.error("현재 FinanceDataReader에서 거래대금/등락률 데이터를 제공하지 않는 포맷으로 변경되었습니다.")
+        return pd.DataFrame()
+
+    df_krx = df_krx[['Name', 'Code', 'Market', 'Close', chg_col, amt_col]].copy()
+    
+    # 공통 컬럼명으로 통일
+    df_krx.rename(columns={
         'Name': '종목명',
         'Code': '종목코드',
         'Market': '시장',
         'Close': '현재가',
-        'ChgRate': '등락률',
-        'Amount': '거래대금'
+        chg_col: '등락률',
+        amt_col: '거래대금'
     }, inplace=True)
     
-    # 거래대금이 '원' 단위로 나오므로 가독성을 위해 '백만 원' 단위로 변환
-    df_all['거래대금'] = df_all['거래대금'] / 1000000
-    df_all = df_all.dropna(subset=['현재가', '거래대금', '등락률'])
+    # 3. 데이터 전처리 (거래대금을 백만 원 단위로 변경)
+    df_krx['현재가'] = pd.to_numeric(df_krx['현재가'], errors='coerce')
+    df_krx['등락률'] = pd.to_numeric(df_krx['등락률'], errors='coerce')
+    df_krx['거래대금'] = pd.to_numeric(df_krx['거래대금'], errors='coerce') / 1000000
     
-    return df_all
+    # 결측치(데이터가 없는 종목) 제거
+    df_krx = df_krx.dropna(subset=['현재가', '거래대금', '등락률'])
+    
+    return df_krx
 
 # -----------------------------------------------------------------------------
 # [섹션 1] 코스피 / 코스닥 / 환율 변동 그래프
