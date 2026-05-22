@@ -94,7 +94,11 @@ st.markdown("---")
 # -----------------------------------------------------------------------------
 st.subheader("💼 외국인 선물 수급 및 시장 주도 상태")
 
-foreign_futures_net = np.random.randint(-5000, 5000)
+# [핵심 수정 1] 클릭할 때마다 표가 초기화되는 것을 막기 위해 '세션(Session)'에 데이터를 고정
+if 'foreign_futures_net' not in st.session_state:
+    st.session_state.foreign_futures_net = np.random.randint(-5000, 5000)
+
+foreign_futures_net = st.session_state.foreign_futures_net
 
 if foreign_futures_net >= 0:
     program_intensity = min(100, int(foreign_futures_net / 50))
@@ -122,6 +126,15 @@ with col_m2:
         delta=trade_signal,
         delta_color=score_color
     )
+
+# -----------------------------------------------------------------------------
+# 새로고침(데이터 업데이트) 버튼 추가
+# -----------------------------------------------------------------------------
+if st.button("🔄 실시간 데이터 업데이트 (수동)"):
+    st.session_state.foreign_futures_net = np.random.randint(-5000, 5000) # 랜덤값 재할당
+    get_market_indices.clear() # 캐시 비우기
+    get_realtime_target_stocks.clear() # 캐시 비우기
+    st.rerun()
 
 st.markdown("---")
 
@@ -158,7 +171,7 @@ output_df = pd.DataFrame({
     '시장': top_30['시장']
 }).reset_index(drop=True)
 
-st.markdown("💡 **표에서 가장 점수가 높은 관심 종목을 클릭**하시면 하단에 1분봉 추세 차트가 렌더링 됩니다.")
+st.markdown("💡 **표에서 관심 있는 종목의 행을 클릭**하시면 하단에 차트가 바뀝니다.")
 
 selected_rows = st.dataframe(
     output_df, 
@@ -172,9 +185,10 @@ selected_rows = st.dataframe(
 # -----------------------------------------------------------------------------
 st.markdown("---")
 
+# [핵심 수정 2] Streamlit 최신 버전에 맞는 행 선택(selection) 추출 로직 적용
 selected_idx = 0
-if selected_rows and len(selected_rows.get("selection", {}).get("rows", [])) > 0:
-    selected_idx = selected_rows["selection"]["rows"][0]
+if hasattr(selected_rows, 'selection') and len(selected_rows.selection.rows) > 0:
+    selected_idx = selected_rows.selection.rows[0]
 
 if not output_df.empty:
     target_code = output_df.iloc[selected_idx]['종목코드']
@@ -199,7 +213,7 @@ if not output_df.empty:
     
     ticker_symbol = f"{target_code}.KS" if 'KOSPI' in target_market else f"{target_code}.KQ"
     
-    with st.spinner("차트 데이터를 불러오는 중입니다..."):
+    with st.spinner(f"[{target_name}] 차트 데이터를 불러오는 중입니다..."):
         stock_ticker = yf.Ticker(ticker_symbol)
         hist = stock_ticker.history(period="1d", interval="1m")
         
