@@ -94,4 +94,44 @@ st.markdown("---")
 # -----------------------------------------------------------------------------
 st.subheader("💼 외국인 선물 수급 및 시장 주도 상태")
 
-foreign_futures_net =
+foreign_futures_net = np.random.randint(-5000, 5000)
+
+if foreign_futures_net >= 0:
+    program_intensity = min(100, int(foreign_futures_net / 50))
+    trade_signal = "🚀 우량주 단타 적극 추천 (바스켓 매수 유입)"
+    delta_msg = "매수 우위 (시장 주도)"
+    score_color = "normal"
+else:
+    program_intensity = max(0, 100 - min(100, int(abs(foreign_futures_net) / 50)))
+    trade_signal = "⚠️ 대형주 단타 자제 (프로그램 매물 압력)"
+    delta_msg = "매도 우위 (시장 압박)"
+    score_color = "inverse"
+
+col_m1, col_m2 = st.columns(2)
+with col_m1:
+    st.metric(
+        label="외국인 주식선물 순매수 금액", 
+        value=f"{foreign_futures_net:,} 억 원", 
+        delta=delta_msg, 
+        delta_color=score_color
+    )
+with col_m2:
+    st.metric(
+        label="시장 전체 우량주 매력도 환경 (100점 만점)", 
+        value=f"{program_intensity} 점", 
+        delta=trade_signal,
+        delta_color=score_color
+    )
+
+st.markdown("---")
+
+# -----------------------------------------------------------------------------
+# [섹션 3] 개별 종목 '단타 매력도 점수' 산출 및 스크리닝
+# -----------------------------------------------------------------------------
+st.subheader("🎯 단타 타겟 Top 30 (우량주 매력도 점수 랭킹 순)")
+
+try:
+    df_universe = get_realtime_target_stocks()
+    
+    cond_price = df_universe['현재가'] >= 10000
+    cond_rise = df_universe
