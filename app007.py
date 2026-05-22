@@ -79,17 +79,46 @@ with col3:
 st.markdown("---")
 
 # -----------------------------------------------------------------------------
-# [섹션 2] 국내주식 선물 외국인 매수비용
+# [고도화된 섹션 2] 국내주식 선물 외국인 매수 동향 및 우량주 매력도 지표
 # -----------------------------------------------------------------------------
-st.subheader("💼 국내주식 선물 외국인 매수 동향")
+st.subheader("💼 외국인 선물 수급 및 우량주 단타 지수")
 
-foreign_futures_net = np.random.randint(-2000, 2000)
+# 실제 구현 시에는 실시간 선물 순매수 금액을 API로 받아옵니다.
+# 여기서는 연동 원리를 보여주기 위해 예시 데이터를 활용합니다.
+foreign_futures_net = np.random.randint(-10000, 10000) # 단위: 억원
 
+# 외국인 선물 매수 강도에 따른 프로그램 매매 유입 및 우량주 매력도 계산 (시뮬레이터 로직)
 if foreign_futures_net >= 0:
-    st.metric(label="외국인 주식선물 순매수 금액", value=f"{foreign_futures_net:,} 억 원", delta="매수 우위")
+    # 매수 우위일 때: 선물 매수가 클수록 프로그램 유입 강도 증가
+    program_intensity = min(100, int(foreign_futures_net / 100))
+    trade_signal = "🚀 우량주 단타 최적 (프로그램 매수 유입 중)"
+    delta_msg = "매수 우위 (현물 바스켓 매수 유발)"
+    score_color = "normal"
 else:
-    st.metric(label="외국인 주식선물 순매수 금액", value=f"{foreign_futures_net:,} 억 원", delta="매도 우위", delta_color="inverse")
+    # 매도 우위일 때: 선물 매도가 클수록 프로그램 매물 폭탄 위험 증가
+    program_intensity = max(0, 100 - min(100, int(abs(foreign_futures_net) / 100)))
+    trade_signal = "⚠️ 우량주 단타 위험 (프로그램 매도 압력 강함)"
+    delta_msg = "매도 우위 (현물 차익 매도 유발)"
+    score_color = "inverse"
 
+# 화면 표시
+col_m1, col_m2 = st.columns(2)
+with col_m1:
+    st.metric(
+        label="외국인 주식선물 순매수 금액", 
+        value=f"{foreign_futures_net:,} 억 원", 
+        delta=delta_msg, 
+        delta_color=score_color
+    )
+with col_m2:
+    st.metric(
+        label="대형 우량주 단타 매력도 점수", 
+        value=f"{program_intensity} / 100 점", 
+        delta=trade_signal,
+        delta_color=score_color
+    )
+
+st.markdown("💡 **Tip:** 매력도 점수가 **70점 이상**일 때 하단 스캐너에 잡히는 시가총액 상위 우량주(삼성전자, SK하이닉스 등)를 공략하면 프로그램 수급의 유입으로 인해 안정적인 상승 랠리를 누릴 수 있습니다.")
 st.markdown("---")
 
 # -----------------------------------------------------------------------------
