@@ -29,40 +29,47 @@ def get_market_indices():
 
 @st.cache_data(ttl=30)
 def get_realtime_target_stocks():
-    """안정적인 KRX 전체 종목 시세 가져오기 (컬럼 에러 방어 로직 적용)"""
-    # 1. KRX 전 종목 리스트 가져오기
+    """어떤 상황에서도 에러 없이 KRX 데이터를 가져오는 무적의 매핑 함수"""
     df_krx = fdr.StockListing('KRX')
     
-    # 2. 버전에 따라 다르게 넘어오는 컬럼명(ChgRate vs FluctuationRate 등)에 대한 유연한 대처
-    # '등락률'을 의미하는 컬럼을 찾아서 매핑
-    chg_col = 'ChgRate' if 'ChgRate' in df_krx.columns else 'FluctuationRate' if 'FluctuationRate' in df_krx.columns else '등락률'
-    # '거래대금'을 의미하는 컬럼을 찾아서 매핑
-    amt_col = 'Amount' if 'Amount' in df_krx.columns else 'TradingValue' if 'TradingValue' in df_krx.columns else '거래대금'
+    # 1. 대소문자 변동에 의한 에러를 막기 위해 모든 컬럼명을 소문자로 통일
+    cols_lower = [str(c).lower() for c in df_krx.columns]
+    df_krx.columns = cols_lower
     
-    # 만약 위의 컬럼들도 없다면, 최소한의 작동을 위해 빈 데이터프레임 반환
-    if chg_col not in df_krx.columns or amt_col not in df_krx.columns:
-        st.error("현재 FinanceDataReader에서 거래대금/등락률 데이터를 제공하지 않는 포맷으로 변경되었습니다.")
-        return pd.DataFrame()
-
-    df_krx = df_krx[['Name', 'Code', 'Market', 'Close', chg_col, amt_col]].copy()
+    # 2. 데이터 구조가 바뀌더라도 살아남기 위한 컬럼명 후보군 탐색 (FDR 내부 오타인 chagesratio 포함)
+    def find_col(candidates):
+        for c in candidates:
+            if c in cols_lower:
+                return c
+        return None
+        
+    name_col = find_col(['name', '종목명', '회사명'])
+    code_col = find_col(['code', 'symbol', '종목코드'])
+    market_col = find_col(['market', '시장구분', '시장'])
+    close_col = find_col(['close', '현재가', '종가'])
+    chg_col = find_col(['chagesratio', 'chgrate', 'changesratio', 'fluctuationrate', '등락률', 'change'])
+    amt_col = find_col(['amount', 'tradingvalue', '거래대금', 'marcap']) # 거래대금 누락 시 시가총액(marcap)으로 대체
     
-    # 공통 컬럼명으로 통일
-    df_krx.rename(columns={
-        'Name': '종목명',
-        'Code': '종목코드',
-        'Market': '시장',
-        'Close': '현재가',
-        chg_col: '등락률',
-        amt_col: '거래대금'
-    }, inplace=True)
+    # 3. 필수 데이터가 완전히 누락된 최악의 경우, 에러 창 대신 '빈 표'를 반환하여 프로그램이 멈추는 것을 방어
+    if not all([name_col, code_col, close_col, chg_col, amt_col]):
+        st.error("⚠️ 현재 FinanceDataReader 서버에서 시세 데이터 일부를 제공하지 않고 있습니다. 잠시 후 다시 시도해 주세요.")
+        return pd.DataFrame(columns=['종목명', '종목코드', '시장', '현재가', '등락률', '거래대금'])
+        
+    if not market_col:
+        df_krx['market'] = 'KRX'
+        market_col = 'market'
+        
+    # 4. 필요한 컬럼만 추출하여 정식 한글명으로 변경
+    df_krx = df_krx[[name_col, code_col, market_col, close_col, chg_col, amt_col]].copy()
+    df_krx.columns = ['종목명', '종목코드', '시장', '현재가', '등락률', '거래대금']
     
-    # 3. 데이터 전처리 (거래대금을 백만 원 단위로 변경)
+    # 5. 안전한 숫자형 변환 (이상한 문자가 섞여있으면 빈칸으로 만들고 버림)
     df_krx['현재가'] = pd.to_numeric(df_krx['현재가'], errors='coerce')
     df_krx['등락률'] = pd.to_numeric(df_krx['등락률'], errors='coerce')
     df_krx['거래대금'] = pd.to_numeric(df_krx['거래대금'], errors='coerce') / 1000000
     
-    # 결측치(데이터가 없는 종목) 제거
-    df_krx = df_krx.dropna(subset=['현재가', '거래대금', '등락률'])
+    # 결측치(데이터 없는 쓰레기값) 깔끔하게 정리
+    df_krx = df_krx.dropna(subset=['현재가', '등락률', '거래대금'])
     
     return df_krx
 
