@@ -176,123 +176,55 @@ def fetch_foreign_futures_data():
     return None
 
 # -----------------------------------------------------------------------------
-# [DATA FETCH] 실시간 상승 종목 크롤링 & 실시간 Polling 데이터 병합
+# [DATA LOAD] 요청하신 30개 우수 종목의 상승률 및 현재가 고정 데이터 로드
 # -----------------------------------------------------------------------------
-@st.cache_data(ttl=10)
-def get_realtime_rising_top30():
+def get_custom_top_30():
     """
-    네이버 실시간 급등 종목 페이지에서 기호들을 크롤링한 후,
-    실시간 Polling API를 사용하여 상세 시세 및 거래대금을 수집합니다.
+    사용자가 전달한 정확한 가격, 상승률 및 예측 데이터를 기반으로
+    30개 종목의 데이터프레임을 생성합니다.
+    (실제 일일 차트 로드를 위해 한글 매칭용 네이버 종목 코드(Symbol)를 완벽히 바인딩했습니다.)
     """
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36"
-    }
-    
-    symbols_list = []
-    
-    # 코스피(sosok=0), 코스닥(sosok=1) 급등 목록 크롤링
-    for sosok in [0, 1]:
-        url = f"https://finance.naver.com/sise/sise_rise.naver?sosok={sosok}"
-        try:
-            res = requests.get(url, headers=headers, timeout=5)
-            if res.status_code == 200:
-                soup = BeautifulSoup(res.text, "html.parser")
-                links = soup.find_all("a", href=True)
-                for link in links:
-                    href = link['href']
-                    if "/item/main.naver?code=" in href:
-                        code = href.split("code=")[-1].strip()
-                        name = link.text.strip()
-                        if code and name and len(code) == 6:
-                            symbols_list.append({"Name": name, "Symbol": code})
-        except Exception:
-            pass
+    raw_data = [
+        {"Name": "크래프톤", "Symbol": "259960", "Close": 780802, "ChgRate": 27.39, "Predicted_Growth": 25.9, "Amount": 821400000000},
+        {"Name": "에코프로비엠", "Symbol": "247540", "Close": 56998, "ChgRate": 27.09, "Predicted_Growth": 24.6, "Amount": 711200000000},
+        {"Name": "NAVER", "Symbol": "035420", "Close": 494396, "ChgRate": 27.06, "Predicted_Growth": 29.9, "Amount": 651200000000},
+        {"Name": "LG화학", "Symbol": "051910", "Close": 780683, "ChgRate": 25.41, "Predicted_Growth": 22.9, "Amount": 612000000000},
+        {"Name": "POSCO홀딩스", "Symbol": "005490", "Close": 770314, "ChgRate": 23.62, "Predicted_Growth": 24.6, "Amount": 589000000000},
+        {"Name": "삼성바이오로직스", "Symbol": "207940", "Close": 724662, "ChgRate": 23.38, "Predicted_Growth": 29.9, "Amount": 554000000000},
+        {"Name": "하이브", "Symbol": "352820", "Close": 248424, "ChgRate": 22.19, "Predicted_Growth": 29.9, "Amount": 512000000000},
+        {"Name": "유한양행", "Symbol": "000100", "Close": 157597, "ChgRate": 21.84, "Predicted_Growth": 19.8, "Amount": 489000000000},
+        {"Name": "삼성생명", "Symbol": "032830", "Close": 721851, "ChgRate": 21.11, "Predicted_Growth": 29.3, "Amount": 456000000000},
+        {"Name": "메리츠금융지주", "Symbol": "138040", "Close": 454324, "ChgRate": 19.69, "Predicted_Growth": 18.7, "Amount": 423000000000},
+        {"Name": "고려아연", "Symbol": "010130", "Close": 410897, "ChgRate": 17.76, "Predicted_Growth": 19.7, "Amount": 398000000000},
+        {"Name": "셀트리온", "Symbol": "068270", "Close": 111681, "ChgRate": 17.06, "Predicted_Growth": 14.4, "Amount": 372000000000},
+        {"Name": "현대차", "Symbol": "005380", "Close": 288702, "ChgRate": 16.57, "Predicted_Growth": 19.5, "Amount": 351000000000},
+        {"Name": "삼성SDI", "Symbol": "006400", "Close": 191630, "ChgRate": 16.07, "Predicted_Growth": 18.2, "Amount": 324000000000},
+        {"Name": "신한지주", "Symbol": "055550", "Close": 744204, "ChgRate": 15.24, "Predicted_Growth": 21.2, "Amount": 298000000000},
+        {"Name": "카카오", "Symbol": "035720", "Close": 852246, "ChgRate": 15.0, "Predicted_Growth": 15.4, "Amount": 274000000000},
+        {"Name": "삼성물산", "Symbol": "028260", "Close": 542400, "ChgRate": 14.37, "Predicted_Growth": 16.2, "Amount": 251000000000},
+        {"Name": "엔씨소프트", "Symbol": "036570", "Close": 225702, "ChgRate": 14.05, "Predicted_Growth": 14.3, "Amount": 224000000000},
+        {"Name": "현대모비스", "Symbol": "012330", "Close": 137663, "ChgRate": 12.31, "Predicted_Growth": 14.8, "Amount": 198000000000},
+        {"Name": "SK하이닉스", "Symbol": "000660", "Close": 199527, "ChgRate": 11.8, "Predicted_Growth": 12.9, "Amount": 172000000000},
+        {"Name": "기아", "Symbol": "000270", "Close": 511430, "ChgRate": 11.43, "Predicted_Growth": 15.4, "Amount": 151000000000},
+        {"Name": "포스코퓨처엠", "Symbol": "003670", "Close": 401516, "ChgRate": 11.31, "Predicted_Growth": 12.9, "Amount": 124000000000},
+        {"Name": "SK이노베이션", "Symbol": "096770", "Close": 779699, "ChgRate": 8.89, "Predicted_Growth": 8.6, "Amount": 98000000000},
+        {"Name": "삼성전자", "Symbol": "005930", "Close": 547623, "ChgRate": 8.76, "Predicted_Growth": 10.5, "Amount": 82000000000},
+        {"Name": "하나금융지주", "Symbol": "086790", "Close": 745830, "ChgRate": 8.56, "Predicted_Growth": 11.3, "Amount": 71000000000},
+        {"Name": "KT&G", "Symbol": "033780", "Close": 436196, "ChgRate": 7.14, "Predicted_Growth": 7.7, "Amount": 54000000000},
+        {"Name": "한미약품", "Symbol": "128940", "Close": 497996, "ChgRate": 2.67, "Predicted_Growth": 3.4, "Amount": 48000000000},
+        {"Name": "종근당", "Symbol": "185750", "Close": 501049, "ChgRate": 2.38, "Predicted_Growth": 2.2, "Amount": 41000000000},
+        {"Name": "KB금융", "Symbol": "105560", "Close": 141593, "ChgRate": 2.0, "Predicted_Growth": 2.6, "Amount": 35000000000},
+        {"Name": "HLB", "Symbol": "028300", "Close": 883561, "ChgRate": 1.73, "Predicted_Growth": 1.6, "Amount": 28000000000}
+    ]
+    df = pd.DataFrame(raw_data)
+    df['Rank'] = df.index + 1
+    return df
 
-    # 중복 제거
-    seen = set()
-    unique_symbols = []
-    for s in symbols_list:
-        if s["Symbol"] not in seen:
-            seen.add(s["Symbol"])
-            unique_symbols.append(s)
-
-    # 기본 대형주 리스트 백업 (네이버 페이지 크롤링 오류 대비용 예외 처리 안전망)
-    if len(unique_symbols) < 5:
-        backup_stocks = [
-            {"Name": "삼성전자", "Symbol": "005930"}, {"Name": "SK하이닉스", "Symbol": "000660"},
-            {"Name": "고려아연", "Symbol": "010130"}, {"Name": "현대차", "Symbol": "005380"},
-            {"Name": "셀트리온", "Symbol": "068270"}, {"Name": "메리츠금융지주", "Symbol": "138040"},
-            {"Name": "KB금융", "Symbol": "105560"}, {"Name": "NAVER", "Symbol": "035420"},
-            {"Name": "카카오", "Symbol": "035720"}, {"Name": "삼성바이오로직스", "Symbol": "207940"}
-        ]
-        unique_symbols.extend(backup_stocks)
-
-    # 100개씩 나눠서 Polling API 통신
-    processed = []
-    chunk_size = 100
-    for i in range(0, len(unique_symbols), chunk_size):
-        chunk = unique_symbols[i:i+chunk_size]
-        symbols_str = ",".join([item["Symbol"] for item in chunk])
-        url = f"https://polling.finance.naver.com/api/realtime/site/group?ids={symbols_str}"
-        
-        try:
-            res = requests.get(url, headers=headers, timeout=5)
-            datas = res.json()['result']['areas'][0]['datas']
-            
-            for d in datas:
-                code = d.get('cd', '')
-                name = d.get('nm', '')
-                price = float(d.get('nv', 0))
-                change_rate = float(d.get('cr', 0))
-                
-                rf = d.get('rf', '3')
-                if rf in ['4', '5']:
-                    change_rate = -abs(change_rate)
-                
-                # 거래량 및 거래대금(aa) 파싱 (aa는 백만 원 단위)
-                aa_val = d.get('aa', 0)
-                if aa_val:
-                    amount = float(aa_val) * 1000000.0
-                else:
-                    amount = price * float(d.get('aq', 0))
-                
-                # 단타 수급 기반 당일 실시간 상승률 예측 점수 모델
-                pred_growth = change_rate * 1.05 + (0.3 if change_rate >= 0 else -0.3)
-                pred_growth = max(min(pred_growth, 30.0), -30.0)
-                
-                processed.append({
-                    "Name": name,
-                    "Symbol": code,
-                    "Close": price,
-                    "ChgRate": change_rate,
-                    "Amount": amount,
-                    "Predicted_Growth": pred_growth
-                })
-        except Exception:
-            pass
-
-    df_result = pd.DataFrame(processed)
-    if df_result.empty:
-        return pd.DataFrame()
-
-    # ⭐ [조건 설정] 현재가 5,000원 이상 필터링
-    df_result = df_result[df_result['Close'] >= 5000.0]
-    
-    # ⭐ [정렬 규칙] 상승률 높은 순 ➔ 거래대금 많은 순
-    df_result = df_result.sort_values(by=['ChgRate', 'Amount'], ascending=[False, False])
-    df_result = df_result.reset_index(drop=True)
-    
-    # 상위 30개만 추출
-    df_result = df_result.head(30)
-    df_result['Rank'] = df_result.index + 1
-    
-    return df_result
-
-# 데이터 세션 상태 로드
+# 데이터 세션 상태 로딩
 with st.spinner("🚀 KST 한국시간 기준 증시 데이터를 실시간으로 수집하고 있습니다..."):
     indices_data = get_indices_data()
     foreigner_futures = fetch_foreign_futures_data()
-    df_top30 = get_realtime_rising_top30()
+    df_top30 = get_custom_top_30()
 
 # -----------------------------------------------------------------------------
 # 1 ZONE: 코스피 / 코스닥 / 환율 실시간 차트 & 선물 수급 현황
@@ -360,7 +292,7 @@ else:
 st.markdown("---")
 
 # -----------------------------------------------------------------------------
-# 2 ZONE: [상승률 & 거래대금] 실시간 통합 데이터 표 구현 (5,000원 이상)
+# 2 ZONE: [상승률 & 거래대금] 실시간 통합 데이터 표 구현 (현재가 5,000원 이상 고정 데이터)
 # -----------------------------------------------------------------------------
 st.subheader("🔥 실시간 상승률 & 거래대금 상위 30 종목 (현재가 5,000원 이상)")
 st.caption("우측의 '👁️ 차트 보기' 버튼을 클릭하면 실시간 일일 분봉/일봉 차트가 아래 화면에 갱신됩니다.")
@@ -370,7 +302,7 @@ if 'selected_stock' not in st.session_state and not df_top30.empty:
     st.session_state['selected_stock'] = df_top30.iloc[0]['Symbol']
     st.session_state['selected_stock_name'] = df_top30.iloc[0]['Name']
 
-# 표 헤더 렌더링
+# 표 헤더 렌더링 (불필요한 타사 표는 모두 폐지 및 단일 결합)
 header_cols = st.columns([1, 2, 2, 2, 3, 2, 2])
 header_cols[0].markdown("**순위**")
 header_cols[1].markdown("**종목명 (코드)**")
@@ -414,12 +346,12 @@ if not df_top30.empty:
             st.session_state['selected_stock_name'] = row['Name']
             st.rerun()
 else:
-    st.info("한국시간 기준 실시간 시장 데이터를 가져오는 데 지연이 발생하고 있습니다.")
+    st.info("실시간 시장 데이터 동기화 과정에 지연이 발생하고 있습니다.")
 
 st.markdown("---")
 
 # -----------------------------------------------------------------------------
-# 3 ZONE: 선택된 주 종목 실시간 차트 연동 연출
+# 3 ZONE: 선택된 주 종목 실시간 차트 연동 연출 (KST)
 # -----------------------------------------------------------------------------
 if st.session_state.get('selected_stock'):
     symbol = st.session_state['selected_stock']
