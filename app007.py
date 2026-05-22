@@ -130,8 +130,65 @@ st.markdown("---")
 # -----------------------------------------------------------------------------
 st.subheader("🎯 단타 타겟 Top 30 (우량주 매력도 점수 랭킹 순)")
 
-try:
-    df_universe = get_realtime_target_stocks()
+# 여기서부터 들여쓰기를 모두 수정하고 try 구문을 완전히 제거했습니다.
+df_universe = get_realtime_target_stocks()
+
+cond_price = df_universe['현재가'] >= 10000
+cond_rise = df_universe['등락률'] > 0
+
+filtered_df = df_universe[cond_price & cond_rise].copy()
+
+market_cap_weight = foreign_futures_net / 5000.0 
+
+filtered_df['우량주_매력도_점수'] = (
+    (filtered_df['등락률'] * 1.5) + 
+    (np.log1p(filtered_df['거래대금']) * 2.5) + 
+    (np.log1p(filtered_df['시가총액']) * market_cap_weight * 1.5)
+).round(1)
+
+top_30 = filtered_df.sort_values(by='우량주_매력도_점수', ascending=False).head(30)
+
+output_df = pd.DataFrame({
+    '매력도 점수': top_30['우량주_매력도_점수'].apply(lambda x: f"{x} 점"),
+    '종목명': top_30['종목명'],
+    '현재가': top_30['현재가'].apply(lambda x: f"{int(x):,} 원"),
+    '전일대비 상승률': top_30['등락률'].apply(lambda x: f"+{x:.2f} %"),
+    '거래대금(백만)': top_30['거래대금'].apply(lambda x: f"{int(x):,}"),
+    '시가총액(억)': top_30['시가총액'].apply(lambda x: f"{int(x):,}"),
+    '종목코드': top_30['종목코드'],
+    '시장': top_30['시장']
+}).reset_index(drop=True)
+
+st.markdown("💡 **표에서 가장 점수가 높은 관심 종목을 클릭**하시면 하단에 1분봉 추세 차트가 렌더링 됩니다.")
+
+selected_rows = st.dataframe(
+    output_df, 
+    use_container_width=True, 
+    selection_mode="single-row",
+    on_select="rerun"
+)
+
+# -----------------------------------------------------------------------------
+# [섹션 4] 종목 클릭 시 1분봉 시각화
+# -----------------------------------------------------------------------------
+st.markdown("---")
+
+selected_idx = 0
+if selected_rows and len(selected_rows.get("selection", {}).get("rows", [])) > 0:
+    selected_idx = selected_rows["selection"]["rows"][0]
+
+if not output_df.empty:
+    target_code = output_df.iloc[selected_idx]['종목코드']
+    target_name = output_df.iloc[selected_idx]['종목명']
+    target_market = output_df.iloc[selected_idx]['시장']
+    target_price = output_df.iloc[selected_idx]['현재가']
+    target_change = output_df.iloc[selected_idx]['전일대비 상승률']
+    target_vol = output_df.iloc[selected_idx]['거래대금(백만)']
     
-    cond_price = df_universe['현재가'] >= 10000
-    cond_rise = df_universe
+    st.markdown(f"""
+    <div style='padding: 10px 0; border-bottom: 1px solid #ddd; margin-bottom: 15px;'>
+        <span style='font-size: 20px; font-weight: bold;'>{target_name}</span> 
+        <span style='font-size: 14px; color: #888;'>시</span> <span style='font-size: 14px;'>-</span>
+        <span style='font-size: 14px; color: #888;'>고</span> <span style='font-size: 14px;'>-</span>
+        <span style='font-size: 14px; color: #888;'>저</span> <span style='font-size: 14px;'>-</span>
+        <span
