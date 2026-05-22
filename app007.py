@@ -136,12 +136,11 @@ try:
         on_select="rerun"
     )
 
-    # -----------------------------------------------------------------------------
-    # [섹션 4] 종목 클릭 시 일일 진행 차트 시각화
+   # -----------------------------------------------------------------------------
+    # [섹션 4] 종목 클릭 시 일일 진행 차트 시각화 (이미지 스타일 적용)
     # -----------------------------------------------------------------------------
     st.markdown("---")
-    st.subheader("📈 선택 종목 일일 추세(분봉) 차트")
-
+    
     selected_idx = 0
     if selected_rows and len(selected_rows.get("selection", {}).get("rows", [])) > 0:
         selected_idx = selected_rows["selection"]["rows"][0]
@@ -150,35 +149,85 @@ try:
         target_code = output_df.iloc[selected_idx]['종목코드']
         target_name = output_df.iloc[selected_idx]['종목명']
         target_market = output_df.iloc[selected_idx]['시장']
+        target_price = output_df.iloc[selected_idx]['현재가']
+        target_change = output_df.iloc[selected_idx]['전일비교 상승비율']
+        target_vol = output_df.iloc[selected_idx]['거래대금(백만)']
         
-        st.write(f"현재 선택된 종목: **{target_name} ({target_code})**")
+        # 상단 헤더 디자인 (첨부 이미지 스타일)
+        st.markdown(f"""
+        <div style='padding: 10px 0; border-bottom: 1px solid #ddd; margin-bottom: 15px;'>
+            <span style='font-size: 20px; font-weight: bold;'>{target_name}</span> 
+            <span style='font-size: 14px; color: #888;'>시</span> <span style='font-size: 14px;'>-</span>
+            <span style='font-size: 14px; color: #888;'>고</span> <span style='font-size: 14px;'>-</span>
+            <span style='font-size: 14px; color: #888;'>저</span> <span style='font-size: 14px;'>-</span>
+            <span style='font-size: 14px; color: #888;'>종</span> <span style='font-size: 14px; font-weight: bold;'>{target_price}</span>
+            <span style='font-size: 14px; color: #e12929; margin-left: 5px;'>{target_change}</span>
+            <span style='font-size: 14px; color: #888; margin-left: 10px;'>거(대금) {target_vol}백만</span>
+            <span style='float: right; font-size: 12px; color: #999; margin-top: 5px;'>한국거래소({target_market})</span>
+        </div>
+        """, unsafe_allow_html=True)
         
         ticker_symbol = f"{target_code}.KS" if 'KOSPI' in target_market else f"{target_code}.KQ"
         
         with st.spinner("차트 데이터를 불러오는 중입니다..."):
             stock_ticker = yf.Ticker(ticker_symbol)
-            hist = stock_ticker.history(period="5d", interval="15m")
+            hist = stock_ticker.history(period="1d", interval="1m") # 1일, 1분봉으로 변경
             
             if not hist.empty:
-                # 한국 시간 기준으로 차트 x축 인덱스 변환
                 hist.index = hist.index.tz_convert('Asia/Seoul')
                 
-                fig_stock = go.Figure(data=[go.Candlestick(
+                # 라인 차트 생성
+                fig_stock = go.Figure()
+                fig_stock.add_trace(go.Scatter(
                     x=hist.index,
-                    open=hist['Open'], high=hist['High'],
-                    low=hist['Low'], close=hist['Close'],
-                    increasing_line_color='#FF4B4B', decreasing_line_color='#00CC96'
-                )])
+                    y=hist['Close'],
+                    mode='lines',
+                    line=dict(color='#4c6198', width=1.5), # 이미지와 비슷한 푸른색 라인
+                    fill='tozeroy', # 라인 아래 채우기
+                    fillcolor='rgba(76, 97, 152, 0.05)', # 매우 연한 푸른색 배경
+                    name="현재가"
+                ))
+                
+                # 차트 레이아웃 설정 (밝은 테마, 우측 Y축)
                 fig_stock.update_layout(
-                    title=f"{target_name} 최근 15분봉 진행 차트 (KST 기준)",
-                    xaxis_rangeslider_visible=False,
-                    height=450,
-                    template="plotly_dark",
-                    margin=dict(l=20, r=20, t=40, b=20)
+                    template="plotly_white", # 밝은 배경
+                    height=500,
+                    margin=dict(l=10, r=50, t=20, b=20),
+                    xaxis=dict(
+                        showgrid=True,
+                        gridcolor='#f0f0f0',
+                        rangeslider_visible=False,
+                        type='date'
+                    ),
+                    yaxis=dict(
+                        side='right', # Y축을 오른쪽으로 이동
+                        showgrid=True,
+                        gridcolor='#f0f0f0',
+                        tickformat=',' # 천단위 콤마
+                    ),
+                    hovermode='x unified'
                 )
+                
+                # 현재가(마지막 종가)를 나타내는 우측 태그 추가 (이미지 우측 하단 파란색 박스 느낌)
+                last_price = hist['Close'].iloc[-1]
+                fig_stock.add_annotation(
+                    x=hist.index[-1],
+                    y=last_price,
+                    text=f"{int(last_price):,}",
+                    showarrow=True,
+                    arrowcolor='rgba(0,0,0,0)',
+                    ax=40, ay=0,
+                    xanchor='left',
+                    font=dict(color="white", size=11),
+                    bgcolor="#4c6198",
+                    bordercolor="#4c6198",
+                    borderwidth=1,
+                    borderpad=3
+                )
+
                 st.plotly_chart(fig_stock, use_container_width=True)
             else:
-                st.warning("Yahoo Finance에서 해당 종목의 분봉 데이터를 제공하지 않습니다.")
+                st.warning("Yahoo Finance에서 해당 종목의 당일 1분봉 데이터를 제공하지 않습니다.")
     else:
         st.warning("현재 스크리닝된 상승 종목이 없습니다.")
 
