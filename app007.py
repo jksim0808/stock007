@@ -178,48 +178,6 @@ def fetch_foreign_futures_data():
 # -----------------------------------------------------------------------------
 # [DATA LOAD] 요청하신 30개 우수 종목의 상승률 및 현재가 고정 데이터 로드
 # -----------------------------------------------------------------------------
-def get_custom_top_30():
-    """
-    사용자가 전달한 정확한 가격, 상승률 및 예측 데이터를 기반으로
-    30개 종목의 데이터프레임을 생성합니다.
-    (실제 일일 차트 로드를 위해 한글 매칭용 네이버 종목 코드(Symbol)를 완벽히 바인딩했습니다.)
-    """
-    raw_data = [
-        {"Name": "크래프톤", "Symbol": "259960", "Close": 780802, "ChgRate": 27.39, "Predicted_Growth": 25.9, "Amount": 821400000000},
-        {"Name": "에코프로비엠", "Symbol": "247540", "Close": 56998, "ChgRate": 27.09, "Predicted_Growth": 24.6, "Amount": 711200000000},
-        {"Name": "NAVER", "Symbol": "035420", "Close": 494396, "ChgRate": 27.06, "Predicted_Growth": 29.9, "Amount": 651200000000},
-        {"Name": "LG화학", "Symbol": "051910", "Close": 780683, "ChgRate": 25.41, "Predicted_Growth": 22.9, "Amount": 612000000000},
-        {"Name": "POSCO홀딩스", "Symbol": "005490", "Close": 770314, "ChgRate": 23.62, "Predicted_Growth": 24.6, "Amount": 589000000000},
-        {"Name": "삼성바이오로직스", "Symbol": "207940", "Close": 724662, "ChgRate": 23.38, "Predicted_Growth": 29.9, "Amount": 554000000000},
-        {"Name": "하이브", "Symbol": "352820", "Close": 248424, "ChgRate": 22.19, "Predicted_Growth": 29.9, "Amount": 512000000000},
-        {"Name": "유한양행", "Symbol": "000100", "Close": 157597, "ChgRate": 21.84, "Predicted_Growth": 19.8, "Amount": 489000000000},
-        {"Name": "삼성생명", "Symbol": "032830", "Close": 721851, "ChgRate": 21.11, "Predicted_Growth": 29.3, "Amount": 456000000000},
-        {"Name": "메리츠금융지주", "Symbol": "138040", "Close": 454324, "ChgRate": 19.69, "Predicted_Growth": 18.7, "Amount": 423000000000},
-        {"Name": "고려아연", "Symbol": "010130", "Close": 410897, "ChgRate": 17.76, "Predicted_Growth": 19.7, "Amount": 398000000000},
-        {"Name": "셀트리온", "Symbol": "068270", "Close": 111681, "ChgRate": 17.06, "Predicted_Growth": 14.4, "Amount": 372000000000},
-        {"Name": "현대차", "Symbol": "005380", "Close": 288702, "ChgRate": 16.57, "Predicted_Growth": 19.5, "Amount": 351000000000},
-        {"Name": "삼성SDI", "Symbol": "006400", "Close": 191630, "ChgRate": 16.07, "Predicted_Growth": 18.2, "Amount": 324000000000},
-        {"Name": "신한지주", "Symbol": "055550", "Close": 744204, "ChgRate": 15.24, "Predicted_Growth": 21.2, "Amount": 298000000000},
-        {"Name": "카카오", "Symbol": "035720", "Close": 852246, "ChgRate": 15.0, "Predicted_Growth": 15.4, "Amount": 274000000000},
-        {"Name": "삼성물산", "Symbol": "028260", "Close": 542400, "ChgRate": 14.37, "Predicted_Growth": 16.2, "Amount": 251000000000},
-        {"Name": "엔씨소프트", "Symbol": "036570", "Close": 225702, "ChgRate": 14.05, "Predicted_Growth": 14.3, "Amount": 224000000000},
-        {"Name": "현대모비스", "Symbol": "012330", "Close": 137663, "ChgRate": 12.31, "Predicted_Growth": 14.8, "Amount": 198000000000},
-        {"Name": "SK하이닉스", "Symbol": "000660", "Close": 199527, "ChgRate": 11.8, "Predicted_Growth": 12.9, "Amount": 172000000000},
-        {"Name": "기아", "Symbol": "000270", "Close": 511430, "ChgRate": 11.43, "Predicted_Growth": 15.4, "Amount": 151000000000},
-        {"Name": "포스코퓨처엠", "Symbol": "003670", "Close": 401516, "ChgRate": 11.31, "Predicted_Growth": 12.9, "Amount": 124000000000},
-        {"Name": "SK이노베이션", "Symbol": "096770", "Close": 779699, "ChgRate": 8.89, "Predicted_Growth": 8.6, "Amount": 98000000000},
-        {"Name": "삼성전자", "Symbol": "005930", "Close": 547623, "ChgRate": 8.76, "Predicted_Growth": 10.5, "Amount": 82000000000},
-        {"Name": "하나금융지주", "Symbol": "086790", "Close": 745830, "ChgRate": 8.56, "Predicted_Growth": 11.3, "Amount": 71000000000},
-        {"Name": "KT&G", "Symbol": "033780", "Close": 436196, "ChgRate": 7.14, "Predicted_Growth": 7.7, "Amount": 54000000000},
-        {"Name": "한미약품", "Symbol": "128940", "Close": 497996, "ChgRate": 2.67, "Predicted_Growth": 3.4, "Amount": 48000000000},
-        {"Name": "종근당", "Symbol": "185750", "Close": 501049, "ChgRate": 2.38, "Predicted_Growth": 2.2, "Amount": 41000000000},
-        {"Name": "KB금융", "Symbol": "105560", "Close": 141593, "ChgRate": 2.0, "Predicted_Growth": 2.6, "Amount": 35000000000},
-        {"Name": "HLB", "Symbol": "028300", "Close": 883561, "ChgRate": 1.73, "Predicted_Growth": 1.6, "Amount": 28000000000}
-    ]
-    df = pd.DataFrame(raw_data)
-    df['Rank'] = df.index + 1
-    return df
-
 # 데이터 세션 상태 로딩
 with st.spinner("🚀 KST 한국시간 기준 증시 데이터를 실시간으로 수집하고 있습니다..."):
     indices_data = get_indices_data()
