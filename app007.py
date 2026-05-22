@@ -14,7 +14,7 @@ st.title("🚀 실시간 단타 및 시장 동향 대시보드")
 KST = timezone(timedelta(hours=9))
 
 # -----------------------------------------------------------------------------
-# 1. 데이터 로드 함수 (시가총액 데이터 추가 및 무적 방어 로직)
+# 1. 데이터 로드 함수
 # -----------------------------------------------------------------------------
 @st.cache_data(ttl=60)
 def get_market_indices():
@@ -45,7 +45,7 @@ def get_realtime_target_stocks():
     close_col = find_col(['close', '현재가', '종가'])
     chg_col = find_col(['chagesratio', 'chgrate', 'changesratio', 'fluctuationrate', '등락률', 'change'])
     amt_col = find_col(['amount', 'tradingvalue', '거래대금'])
-    marcap_col = find_col(['marcap', '시가총액', 'marketcap']) # 대형주 분류를 위한 시가총액 추가
+    marcap_col = find_col(['marcap', '시가총액', 'marketcap'])
     
     if not all([name_col, code_col, close_col, chg_col, amt_col, marcap_col]):
         st.error("⚠️ 현재 FinanceDataReader 서버 데이터 제공이 원활하지 않습니다.")
@@ -60,8 +60,8 @@ def get_realtime_target_stocks():
     
     df_krx['현재가'] = pd.to_numeric(df_krx['현재가'], errors='coerce')
     df_krx['등락률'] = pd.to_numeric(df_krx['등락률'], errors='coerce')
-    df_krx['거래대금'] = pd.to_numeric(df_krx['거래대금'], errors='coerce') / 1000000 # 백만 원
-    df_krx['시가총액'] = pd.to_numeric(df_krx['시가총액'], errors='coerce') / 100000000 # 억 원
+    df_krx['거래대금'] = pd.to_numeric(df_krx['거래대금'], errors='coerce') / 1000000 
+    df_krx['시가총액'] = pd.to_numeric(df_krx['시가총액'], errors='coerce') / 100000000 
     
     df_krx = df_krx.dropna(subset=['현재가', '등락률', '거래대금', '시가총액'])
     return df_krx
@@ -94,27 +94,4 @@ st.markdown("---")
 # -----------------------------------------------------------------------------
 st.subheader("💼 외국인 선물 수급 및 시장 주도 상태")
 
-foreign_futures_net = np.random.randint(-5000, 5000)
-
-if foreign_futures_net >= 0:
-    program_intensity = min(100, int(foreign_futures_net / 50))
-    trade_signal = "🚀 우량주 단타 적극 추천 (바스켓 매수 유입)"
-    delta_msg = "매수 우위 (시장 주도)"
-    score_color = "normal"
-else:
-    program_intensity = max(0, 100 - min(100, int(abs(foreign_futures_net) / 50)))
-    trade_signal = "⚠️ 대형주 단타 자제 (프로그램 매물 압력)"
-    delta_msg = "매도 우위 (시장 압박)"
-    score_color = "inverse"
-
-col_m1, col_m2 = st.columns(2)
-with col_m1:
-    st.metric(
-        label="외국인 주식선물 순매수 금액", 
-        value=f"{foreign_futures_net:,} 억 원", 
-        delta=delta_msg, 
-        delta_color=score_color
-    )
-with col_m2:
-    st.metric(
-        label="시장 전체 우량주 매력도 환경
+foreign_futures_net =
