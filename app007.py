@@ -1,4 +1,178 @@
 import streamlit as st
+import pandas as pd
+import numpy as np
+import plotly.graph_objects as go
+import FinanceDataReader as fdr
+import yfinance as yf
+from datetime import datetime, timedelta
+
+# 페이지 기본 설정
+st.set_page_config(layout="wide", page_title="국내주식 단타 스캐너")
+st.title("🚀 실시간 단타 및 시장 동향 대시보드")
+
+# -----------------------------------------------------------------------------
+# 1. 데이터 로드 함수 (캐싱 처리로 속도 최적화)
+# -----------------------------------------------------------------------------
+@st.cache_data(ttl=60)  # 1분마다 데이터 갱신
+def get_market_indices():
+    """코스피, 코스닥, 원달러 환율 최근 30일 데이터 가져오기"""
+    today = datetime.today().strftime('%Y-%m-%d')
+    start_date = (datetime.today() - timedelta(days=45)).strftime('%Y-%m-%d')
+    
+    # 지수 및 환율 가져오기
+    kospi = fdr.DataReader('KS11', start_date, today)
+    kosdaq = fdr.DataReader('KQ11', start_date, today)
+    usd_krw = fdr.DataReader('USD/KRW', start_date, today)
+    
+    return kospi, kosdaq, usd_krw
+
+@st.cache_data(ttl=60)
+def get_stock_universe():
+    """KRX 전체 종목 시세 데이터 가져오기 (종목 스크리닝용)"""
+    # 전일/금일 기준 대략적인 상승 종목 리스트 확보를 위해 KRX 전체 종목 조회
+    df_krx = fdr.StockListing('KRX')
+    # 예시용 더미 데이터 구성 (실제 실시간 조건 검색은 네이버 금융/KRX 스크래핑이나 증권사 API 권장)
+    # 가상의 거래대금 및 전일대비 상승률 부여 (실제 운영시 라이브 데이터 바인딩 필요)
+    np.random.seed(42)
+    df_krx = df_krx[df_krx['Market'].isin(['KOSPI', 'KOSDAQ'])].copy()
+    df_krx['Close'] = pd.to_numeric(df_krx['Close'], errors='coerce')
+    df_krx['ChgRate'] = np.random.uniform(-5, 29.9, size=len(df_krx)) # 가상 상승률
+    df_krx['VolumeValue'] = np.random.uniform(100, 50000, size=len(df_krx)) # 가상 거래대금 (억원)
+    df_krx['Sidecar'] = np.random.choice([False, True], size=len(df_krx), p=[0.99, 0.01]) # 가상 사이드카 여부
+    
+    return df_krx
+
+# -----------------------------------------------------------------------------
+# [화면 레이아웃 1] 코스피 / 코스닥 / 환율 변동 그래프
+# -----------------------------------------------------------------------------
+st.subheader("📊 주요 시장 지수 및 환율 동향")
+kospi, kosdaq, usd_krw = get_market_indices()
+
+col1, col2, col3 = st.columns(3)
+
+def create_chart(df, title, color):
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=df.index, y=df['Close'], mode='lines', name=title, line=dict(color=color, width=2)))
+    fig.update_layout(title=title, height=250, margin=dict(l=20, r=20, t=40, b=20), template="plotly_dark")
+    return fig
+
+with col1:
+    st.plotly_chart(create_chart(kospi, "KOSPI 지수", "#FF4B4B"), use_container_width=True)
+with col2:
+    st.plotly_chart(create_chart(kosdaq, "KOSDAQ 지수", "#00CC96"), use_container_width=True)
+with col3:
+    st.plotly_chart(create_chart(usd_krw, "원/달러 환율", "#636EFA"), use_container_width=True)
+
+st.markdown("---")
+
+# -----------------------------------------------------------------------------
+# [화면 레이아웃 2] 국내주식 선물 외국인 매수비용 표시
+# -----------------------------------------------------------------------------
+st.subheader("💼 국내주식 선물 외국인 매수 동향")
+
+# 실제 실시간 선물 수급은 증권사 API 연동이 필요하므로 오픈 소스 구현을 위한 예시 데이터 배치
+# 매수가 없으면(순매도) 마이너스(-)로 표시되는 로직 반영
+foreign_futures_net = np.random.randint(-1500, 2000) # 단위: 억원
+
+if foreign_futures_net >= 0:
+    st.metric(label="외국인 주식선물 순매수 금액", value=f"{foreign_futures_net:,} 억 원", delta="매수 우위 (정상)")
+else:
+    st.metric(label="외국인 주식선물 순매수 금액", value=f"{foreign_futures_net:,} 억 원", delta="매도 우위 (주의)", delta_color="inverse")
+
+st.markdown("---")
+
+# -----------------------------------------------------------------------------
+# [화면 레이아웃 3] 조건 만족 30개 종목 스크리닝 및 상승 예측 순위
+# -----------------------------------------------------------------------------
+st.subheader("🎯 단타 타겟 Top 30 종목 (조건: 주가 5,000원 이상 & 사이드카 미발동)")
+
+df_universe = get_stock_universe()
+
+# 조건 필터링
+# 1. 주가 5000원 이상
+filtered_df = df_universe[df_universe['Close'] >= 5000].copy()
+# 2. 사이드카 타지 않은 종목 (Sidecar == False)
+filtered_df = filtered_df[filtered_df['Sidecar'] == False]
+# 3. 상승 종목 중 (상승률 > 0)
+filtered_df = filtered_df[filtered_df['ChgRate'] > 0]
+
+# 정렬: 상승률 높은 순 & 거래대금 많은 순
+filtered_df = filtered_df.sort_values(by=['ChgRate', 'VolumeValue'], ascending=[False, False])
+
+# 자체 상승 예측 스코어 산출 알고리즘 (예시: 거래대금과 상승률의 가중합 조합)
+# 실제 프로젝트 시 이곳에 자체 ML 모델(XGBoost 등)이나 계량 알고리즘 결과 대입
+filtered_df['Predict_Rate'] = (filtered_df['ChgRate'] * 0.6 + (filtered_df['VolumeValue'] / 2000) * 0.4).round(2)
+
+# 최종 예측 순위별 정렬 및 30개 추출
+top_30 = filtered_df.sort_values(by='Predict_Rate', ascending=False).head(30)
+
+# 출력용 컬럼 재정의 및 포맷팅
+output_df = pd.DataFrame({
+    '종목코드': top_30['Code'],
+    '종목명': top_30['Name'],
+    '현재가': top_30['Close'].map(lambda x: f"{int(x):,}원"),
+    '전일비교 상승비율': top_30['ChgRate'].map(lambda x: f"+{x:.2f}%"),
+    '금일 상승 예측 %': top_30['Predict_Rate'].map(lambda x: f"{x:.2f}%")
+}).reset_index(drop=True)
+
+st.markdown("💡 **아래 표에서 종목 행을 클릭**하시면 하단에 해당 종목의 최근 상세 차트가 표시됩니다.")
+
+# Streamlit 데이터프레임의 인터랙티브 선택 기능(on_select) 활용
+selected_rows = st.dataframe(
+    output_df, 
+    use_container_width=True, 
+    selection_mode="single-row",
+    on_select="rerun"
+)
+
+# -----------------------------------------------------------------------------
+# [화면 레이아웃 4] 종목 클릭 시 일일 차트(최근 추세) 시각화
+# -----------------------------------------------------------------------------
+st.markdown("---")
+st.subheader("📈 선택 종목 일일 진행 차트")
+
+# 기본 선택값 설정 (선택이 없으면 1등 종목 표시)
+selected_index = 0
+if selected_rows and len(selected_rows.get("selection", {}).get("rows", [])) > 0:
+    selected_index = selected_rows["selection"]["rows"][0]
+
+target_code = output_df.iloc[selected_index]['종목코드']
+target_name = output_df.iloc[selected_index]['종목명']
+
+st.write(f"현재 선택된 종목: **{target_name} ({target_code})**")
+
+# 실시간 분봉 대신 일차트 혹은 yfinance 기반 당일 추세를 그리기 위해 최근 5일 데이터 바인딩
+# (실시간 초/분봉은 크레온/한국투자증권 웹소켓 연동이 필요합니다)
+try:
+    ticker_code = f"{target_code}.KS" if target_code.isdigit() else target_code
+    # 코스닥 종목 예외처리 등은 실제 환경에 맞게 보완 가능 (.KQ)
+    stock_detail = yf.Ticker(f"{target_code}.KS") 
+    hist = stock_detail.history(period="5d", interval="15m") # 15분봉 데이터 시도
+    
+    if hist.empty:
+        stock_detail = yf.Ticker(f"{target_code}.KQ")
+        hist = stock_detail.history(period="5d", interval="15m")
+
+    if not hist.empty:
+        fig_stock = go.Figure(data=[go.Candlestick(
+            x=hist.index,
+            open=hist['Open'],
+            high=hist['High'],
+            low=hist['Low'],
+            close=hist['Close'],
+            increasing_line_color='red', decreasing_line_color='blue'
+        )])
+        fig_stock.update_layout(
+            title=f"{target_name} 최근 15분봉 진행 차트",
+            xaxis_rangeslider_visible=False,
+            height=400,
+            template="plotly_dark"
+        )
+        st.plotly_chart(fig_stock, use_container_width=True)
+    else:
+        st.warning("해당 종목의 당일 차트 데이터를 가져오지 못했습니다. (데이터 피드 미연결)")
+except Exception as e:
+    st.error(f"차트 로딩 중 오류 발생: {e}")import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
