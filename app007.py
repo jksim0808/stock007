@@ -6,15 +6,21 @@ import requests
 import json
 from datetime import datetime, timedelta, timezone
 import FinanceDataReader as fdr
+
 # -----------------------------------------------------------------------------
 # [설정] 한국투자증권 API KEY (Streamlit Secrets 활용)
 # -----------------------------------------------------------------------------
 try:
-    APP_KEY = st.secrets["KIS_APP_KEY"]
-    APP_SECRET = st.secrets["KIS_APP_SECRET"] # secret 키도 동일한 방식으로 넣었다고 가정합니다.
+    # 1. secrets에서 값을 가져옵니다.
+    KIS_APP_KEY = st.secrets["KIS_APP_KEY"]
+    KIS_APP_SECRET = st.secrets["KIS_APP_SECRET"]
+    
+    # 2. 코드 내에서 APP_KEY로 쓰이든 KIS_APP_KEY로 쓰이든 
+    # 에러가 나지 않도록 두 변수명 모두에 값을 할당해 줍니다.
+    APP_KEY = KIS_APP_KEY
+    APP_SECRET = KIS_APP_SECRET
 except KeyError:
     st.error("⚠️ Streamlit secrets에 'KIS_APP_KEY' 또는 'KIS_APP_SECRET'이 설정되지 않았습니다.")
-    st.info("로컬 환경의 경우 `.streamlit/secrets.toml` 파일을 확인해주세요.")
     st.stop()
 
 URL_BASE = "https://openapi.koreainvestment.com:9443" # 모의투자는 https://openapivts.koreainvestment.com:29443
