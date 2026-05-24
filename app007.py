@@ -162,8 +162,8 @@ st.subheader("🎯 단타 타겟 Top 30 (우량주 매력도 점수 랭킹 순)"
 df_universe = get_kis_top_volume_stocks()
 
 if not df_universe.empty:
-    cond_price = df_universe['현재가'] >= 10000
-    cond_rise = df_universe['등락률'] > 0
+    cond_price = df_universe['현재가'] >= 5000
+    cond_rise = df_universe['등락률'] > -2.0
     filtered_df = df_universe[cond_price & cond_rise].copy()
 
     filtered_df['우량주_매력도_점수'] = ((filtered_df['등락률'] * 1.5) + (np.log1p(filtered_df['거래대금']) * 2.5)).round(1)
