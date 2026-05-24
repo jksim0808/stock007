@@ -198,7 +198,7 @@ else:
     output_df = pd.DataFrame()
 
 # -----------------------------------------------------------------------------
-# [섹션 4] 종목 클릭 시 KIS 1분봉 시각화
+# [섹션 4] 종목 클릭 시 KIS 1분봉 시각화 (거래량 차트 추가)
 # -----------------------------------------------------------------------------
 st.markdown("---")
 
@@ -224,7 +224,7 @@ if not output_df.empty:
     </div>
     """, unsafe_allow_html=True)
     
-    with st.spinner(f"[{target_name}] KIS 1분봉 데이터를 불러오는 중입니다..."):
+    with st.spinner(f"[{target_name}] KIS 1분봉 및 거래량 데이터를 불러오는 중입니다..."):
         url = f"{URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice"
         headers = get_common_headers("FHKST03010200")
         
@@ -242,30 +242,56 @@ if not output_df.empty:
                 min_data = res_data['output2'][::-1] 
                 times = [f"{m['stck_bsop_date']} {m['stck_cntg_hour']}" for m in min_data]
                 closes = [float(m['stck_prpr']) for m in min_data]
+                volumes = [float(m['cntg_vol']) for m in min_data] # ★ 거래량 데이터 추출
+                
                 date_idx = pd.to_datetime(times, format="%Y%m%d %H%M%S")
-                df_min = pd.DataFrame({"Close": closes}, index=date_idx)
+                df_min = pd.DataFrame({"Close": closes, "Volume": volumes}, index=date_idx)
                 df_min = df_min[df_min['Close'] > 0]
                 
                 if not df_min.empty:
+                    # 거래량 막대 색상 결정 (이전 분봉 대비 상승=빨강, 하락=파랑)
+                    df_min['Diff'] = df_min['Close'].diff().fillna(0)
+                    colors = ['#ff4b4b' if diff >= 0 else '#4c6198' for diff in df_min['Diff']]
+
                     min_price = df_min['Close'].min()
                     max_price = df_min['Close'].max()
                     price_margin = (max_price - min_price) * 0.1 if max_price != min_price else min_price * 0.01
                     
-                    fig_stock = go.Figure(go.Scatter(
+                    fig_stock = go.Figure()
+
+                    # 1. 주가 라인 차트 (상단 70% 영역)
+                    fig_stock.add_trace(go.Scatter(
                         x=df_min.index, y=df_min['Close'], mode='lines', 
-                        line=dict(color='#4c6198', width=1.5), name="현재가"
+                        line=dict(color='#333333', width=2), name="현재가",
+                        yaxis='y'
                     ))
+                    
+                    # 2. 거래량 바 차트 (하단 20% 영역)
+                    fig_stock.add_trace(go.Bar(
+                        x=df_min.index, y=df_min['Volume'], name="거래량",
+                        marker_color=colors, opacity=0.7,
+                        yaxis='y2'
+                    ))
+                    
                     fig_stock.update_layout(
-                        template="plotly_white", height=500, margin=dict(l=10, r=60, t=20, b=20),
+                        template="plotly_white", height=600, margin=dict(l=10, r=60, t=20, b=20),
                         xaxis=dict(showgrid=True, gridcolor='#f0f0f0', type='date', tickformat='%H:%M'),
-                        yaxis=dict(side='right', showgrid=True, gridcolor='#f0f0f0', tickformat=',', range=[min_price - price_margin, max_price + price_margin]),
-                        hovermode='x unified'
+                        yaxis=dict( # 주가 y축 설정
+                            side='right', showgrid=True, gridcolor='#f0f0f0', tickformat=',', 
+                            range=[min_price - price_margin, max_price + price_margin],
+                            domain=[0.3, 1] # 위에서부터 70% 공간 사용
+                        ),
+                        yaxis2=dict( # 거래량 y축 설정
+                            side='right', showgrid=False, tickformat=',',
+                            domain=[0, 0.2] # 아래에서 20% 공간 사용 (10%는 여백)
+                        ),
+                        hovermode='x unified',
+                        showlegend=False
                     )
                     st.plotly_chart(fig_stock, use_container_width=True)
                 else: st.warning("유효한 분봉 데이터가 없습니다.")
             else: st.error(f"분봉 조회 실패: {res_data.get('msg1', '알 수 없는 오류')}")
         except Exception as e: st.error(f"분봉 API 호출 중 에러 발생: {e}")
-
 # -----------------------------------------------------------------------------
 # [섹션 5] 프로그램 로직 및 단타 활용 가이드
 # -----------------------------------------------------------------------------
