@@ -5,133 +5,132 @@ import plotly.graph_objects as go
 import requests
 import json
 from datetime import datetime, timedelta, timezone
-import FinanceDataReader as fdr
+
+# 거시경제 지표용 라이브러리 추가
+import FinanceDataReader as fdr 
 
 # -----------------------------------------------------------------------------
 # [설정] 한국투자증권 API KEY (Streamlit Secrets 활용)
 # -----------------------------------------------------------------------------
 try:
-    # 1. secrets에서 값을 가져옵니다.
     KIS_APP_KEY = st.secrets["KIS_APP_KEY"]
     KIS_APP_SECRET = st.secrets["KIS_APP_SECRET"]
     
-    # 2. 코드 내에서 APP_KEY로 쓰이든 KIS_APP_KEY로 쓰이든 
-    # 에러가 나지 않도록 두 변수명 모두에 값을 할당해 줍니다.
+    # 변수명 통일 (코드 내부에서는 APP_KEY, APP_SECRET 사용)
     APP_KEY = KIS_APP_KEY
     APP_SECRET = KIS_APP_SECRET
 except KeyError:
     st.error("⚠️ Streamlit secrets에 'KIS_APP_KEY' 또는 'KIS_APP_SECRET'이 설정되지 않았습니다.")
+    st.info("로컬 환경의 경우 프로젝트 폴더 내 `.streamlit/secrets.toml` 파일을 확인해주세요.")
     st.stop()
 
-URL_BASE = "https://openapi.koreainvestment.com:9443" # 모의투자는 https://openapivts.koreainvestment.com:29443
+URL_BASE = "https://openapi.koreainvestment.com:9443" # 실전투자 URL
 
 # 페이지 설정
 st.set_page_config(layout="wide", page_title="국내주식 실시간 단타 스캐너 (KIS API)")
-st.title("🚀 실시간 단타 및 시장 동향 대시보드 (한국투자증권 연동)")
+st.title("🚀 실시간 단타 및 시장 동향 대시보드")
 
 # 한국 시간(KST) 설정
 KST = timezone(timedelta(hours=9))
 
 # -----------------------------------------------------------------------------
-# 0. 한투 API 인증 (토큰 발급)
+# 1. KIS API 인증 및 토큰 발급
 # -----------------------------------------------------------------------------
-@st.cache_data(ttl=86000) # 토큰은 보통 24시간 유지되므로 길게 캐싱
-def get_kis_token(app_key, app_secret):
+@st.cache_resource(ttl=3600*20) # 토큰 유효기간(24시간) 고려 20시간 캐싱
+def get_access_token():
     headers = {"content-type": "application/json"}
     body = {
         "grant_type": "client_credentials",
-        "appkey": app_key,
-        "appsecret": app_secret
+        "appkey": APP_KEY,
+        "appsecret": APP_SECRET
     }
-    path = "oauth2/tokenP"
-    res = requests.post(f"{URL_BASE}/{path}", headers=headers, data=json.dumps(body))
-    
-    if res.status_code == 200:
-        return res.json().get("access_token")
-    else:
-        st.error(f"⚠️ KIS 토큰 발급 실패: {res.text}")
+    url = f"{URL_BASE}/oauth2/tokenP"
+    try:
+        res = requests.post(url, headers=headers, data=json.dumps(body))
+        res.raise_for_status()
+        return res.json()["access_token"]
+    except Exception as e:
+        st.error(f"⚠️ 토큰 발급 실패: {e}")
         return None
 
+def get_common_headers(tr_id):
+    token = get_access_token()
+    return {
+        "Content-Type": "application/json",
+        "authorization": f"Bearer {token}",
+        "appKey": APP_KEY,
+        "appSecret": APP_SECRET,
+        "tr_id": tr_id
+    }
+
 # -----------------------------------------------------------------------------
-# 1. 데이터 로드 함수
+# 2. 데이터 로드 함수
 # -----------------------------------------------------------------------------
 @st.cache_data(ttl=60)
 def get_market_indices():
     today = datetime.now(KST).strftime('%Y-%m-%d')
     start_date = (datetime.now(KST) - timedelta(days=30)).strftime('%Y-%m-%d')
+    
     kospi = fdr.DataReader('KS11', start_date, today)
     kosdaq = fdr.DataReader('KQ11', start_date, today)
     usd_krw = fdr.DataReader('USD/KRW', start_date, today)
     return kospi, kosdaq, usd_krw
 
 @st.cache_data(ttl=30)
-def get_kis_target_stocks(token):
+def get_kis_top_volume_stocks():
     """
-    FDR 전체 스캔 대신 KIS '거래대금 상위' API를 호출하여 타겟 종목을 추출합니다.
-    (실시간성 보장 및 API 호출 횟수 최적화)
+    한국투자증권 '거래대금 상위' API를 호출하여 시장의 주도주를 스크리닝 (ETF, ETN, 스팩 제외)
     """
-    if not token:
-        return pd.DataFrame()
-
-    path = "uapi/domestic-stock/v1/quotations/volume-rank"
-    headers = {
-        "content-type": "application/json; charset=utf-8",
-        "authorization": f"Bearer {token}",
-        "appKey": KIS_APP_KEY,
-        "appSecret": KIS_APP_SECRET,
-        "tr_id": "FHPST01710000",
-        "custtype": "P"
-    }
+    url = f"{URL_BASE}/uapi/domestic-stock/v1/quotations/volume-rank"
+    headers = get_common_headers("FHPST01710000")
     
     params = {
-        "FID_COND_MRKT_DIV_CODE": "J", # J: 주식
+        "FID_COND_MRKT_DIV_CODE": "J", 
         "FID_COND_SCR_DIV_CODE": "20171",
-        "FID_INPUT_ISCD": "0000", # 전체
-        "FID_DIV_CLS_CODE": "0",
+        "FID_INPUT_ISCD": "0000",
+        "FID_DIV_CLS_CODE": "1", # 1: 보통주(ETF 제외)
         "FID_BLNG_CLS_CODE": "0",
-        "FID_TRGT_CLS_CODE": "111111111", # 타겟 구분 (전체)
-        "FID_TRGT_EXLS_CLS_CODE": "000000",
-        "FID_INPUT_PRICE_1": "10000", # 최소 10,000원 이상 (사용자 조건 적용)
-        "FID_INPUT_PRICE_2": "10000000",
+        "FID_TRGT_CLS_CODE": "111111111", 
+        "FID_TRGT_EXLS_CLS_CODE": "111111", 
+        "FID_INPUT_PRICE_1": "1000", # 1000원 이상
+        "FID_INPUT_PRICE_2": "1000000",
         "FID_VOL_CNT": "",
         "FID_INPUT_DATE_1": ""
     }
-
-    res = requests.get(f"{URL_BASE}/{path}", headers=headers, params=params)
     
-    if res.status_code != 200:
-        st.error(f"⚠️ KIS 종목 스크리닝 오류: {res.json().get('msg1')}")
+    try:
+        res = requests.get(url, headers=headers, params=params)
+        res.raise_for_status()
+        data = res.json()
+        
+        if data['rt_cd'] != '0':
+            st.error(f"⚠️ KIS API 에러: {data['msg1']}")
+            return pd.DataFrame()
+            
+        items = data['output']
+        
+        df = pd.DataFrame(items)
+        df = df[['hts_kor_isnm', 'mksc_shrn_iscd', 'stck_prpr', 'prdy_ctrt', 'acml_tr_pbmn']]
+        df.columns = ['종목명', '종목코드', '현재가', '등락률', '거래대금']
+        
+        # 2차 텍스트 필터링 (완벽한 차단)
+        exclude_keywords = ['KODEX', 'TIGER', 'KBSTAR', 'ACE', 'ARIRANG', 'HANARO', 'KOSEF', 'SOL', 'TIMEFOLIO', 'WOORI', '히어로즈', '마이티', '스팩', 'ETN']
+        pattern = '|'.join(exclude_keywords)
+        df = df[~df['종목명'].str.contains(pattern, case=False, regex=True)]
+        
+        df['시장'] = 'KRX'
+        df['현재가'] = pd.to_numeric(df['현재가'], errors='coerce')
+        df['등락률'] = pd.to_numeric(df['등락률'], errors='coerce')
+        df['거래대금'] = pd.to_numeric(df['거래대금'], errors='coerce') / 1000000 
+        df['시가총액'] = 10000 # KIS API에 시총이 없으므로 가중치용 기본값
+        
+        return df.dropna()
+    except Exception as e:
+        st.error(f"⚠️ KIS 데이터 호출 실패: {e}")
         return pd.DataFrame()
-
-    data = res.json().get('output', [])
-    if not data:
-        return pd.DataFrame()
-
-    # KIS API 응답을 DataFrame으로 변환
-    df = pd.DataFrame(data)
-    df = df.rename(columns={
-        'hts_kor_isnm': '종목명',
-        'mksc_shrn_iscd': '종목코드',
-        'stck_prpr': '현재가',
-        'prdy_ctrt': '등락률',
-        'acml_tr_pbmn': '거래대금', # 누적 거래대금
-    })
-    
-    # 데이터 타입 변환
-    df['현재가'] = pd.to_numeric(df['현재가'], errors='coerce')
-    df['등락률'] = pd.to_numeric(df['등락률'], errors='coerce')
-    # 한투 거래대금은 '원' 단위이므로 백만 단위로 환산
-    df['거래대금'] = pd.to_numeric(df['거래대금'], errors='coerce') / 1000000 
-    
-    # 시가총액은 해당 API에서 바로 주지 않으므로 등수 기반으로 임시 계산(또는 별도 API 필요)
-    # 여기서는 기존 로직의 오류를 막기 위해 임의값 할당 후 계산 제외
-    df['시가총액'] = 1000 
-    df['시장'] = "KRX"
-    
-    return df
 
 # -----------------------------------------------------------------------------
-# [섹션 1] 지수 및 환율 동향 (유지)
+# [섹션 1] 지수 및 환율 차트
 # -----------------------------------------------------------------------------
 st.subheader("📊 주요 시장 지수 및 환율 동향")
 kospi, kosdaq, usd_krw = get_market_indices()
@@ -144,59 +143,70 @@ def create_chart(df, title, color):
     fig.update_layout(title=title, height=250, margin=dict(l=20, r=20, t=40, b=20), template="plotly_dark")
     return fig
 
-with col1:
-    st.plotly_chart(create_chart(kospi, "KOSPI 지수", "#FF4B4B"), use_container_width=True)
-with col2:
-    st.plotly_chart(create_chart(kosdaq, "KOSDAQ 지수", "#00CC96"), use_container_width=True)
-with col3:
-    st.plotly_chart(create_chart(usd_krw, "원/달러 환율", "#636EFA"), use_container_width=True)
+if not kospi.empty:
+    with col1: st.plotly_chart(create_chart(kospi, "KOSPI 지수", "#FF4B4B"), use_container_width=True)
+if not kosdaq.empty:
+    with col2: st.plotly_chart(create_chart(kosdaq, "KOSDAQ 지수", "#00CC96"), use_container_width=True)
+if not usd_krw.empty:
+    with col3: st.plotly_chart(create_chart(usd_krw, "원/달러 환율", "#636EFA"), use_container_width=True)
 
 st.markdown("---")
 
 # -----------------------------------------------------------------------------
-# [섹션 2] 수급 동향
+# [섹션 2] 외국인 수급 및 시장 상태
 # -----------------------------------------------------------------------------
-st.subheader("💼 시장 수급 및 주도 상태")
+st.subheader("💼 외국인 선물 수급 및 시장 주도 상태")
+
 if 'foreign_futures_net' not in st.session_state:
     st.session_state.foreign_futures_net = np.random.randint(-5000, 5000)
 
 foreign_futures_net = st.session_state.foreign_futures_net
-program_intensity = min(100, int(abs(foreign_futures_net) / 50)) if foreign_futures_net >= 0 else max(0, 100 - min(100, int(abs(foreign_futures_net) / 50)))
-trade_signal = "🚀 우량주 단타 추천" if foreign_futures_net >= 0 else "⚠️ 대형주 단타 자제"
-delta_msg = "매수 우위" if foreign_futures_net >= 0 else "매도 우위"
+
+if foreign_futures_net >= 0:
+    program_intensity = min(100, int(foreign_futures_net / 50))
+    trade_signal = "🚀 우량주 단타 적극 추천 (바스켓 매수 유입)"
+    delta_msg = "매수 우위 (시장 주도)"
+    score_color = "normal"
+else:
+    program_intensity = max(0, 100 - min(100, int(abs(foreign_futures_net) / 50)))
+    trade_signal = "⚠️ 대형주 단타 자제 (프로그램 매물 압력)"
+    delta_msg = "매도 우위 (시장 압박)"
+    score_color = "inverse"
 
 col_m1, col_m2 = st.columns(2)
 with col_m1:
-    st.metric(label="외국인 순매수(가상)", value=f"{foreign_futures_net:,} 억 원", delta=delta_msg, delta_color="normal" if foreign_futures_net >= 0 else "inverse")
+    st.metric(label="외국인 주식선물 순매수 금액 (시뮬레이션)", value=f"{foreign_futures_net:,} 억 원", delta=delta_msg, delta_color=score_color)
 with col_m2:
-    st.metric(label="시장 매력도 환경", value=f"{program_intensity} 점", delta=trade_signal, delta_color="normal" if foreign_futures_net >= 0 else "inverse")
+    st.metric(label="시장 전체 우량주 매력도 환경 (100점 만점)", value=f"{program_intensity} 점", delta=trade_signal, delta_color=score_color)
 
-if st.button("🔄 실시간 데이터 업데이트"):
-    get_market_indices.clear()
-    get_kis_target_stocks.clear()
+if st.button("🔄 실시간 데이터 업데이트 (수동)"):
+    st.session_state.foreign_futures_net = np.random.randint(-5000, 5000)
+    get_kis_top_volume_stocks.clear()
     st.rerun()
 
 st.markdown("---")
 
 # -----------------------------------------------------------------------------
-# [섹션 3] 개별 종목 스크리닝 (KIS API 적용)
+# [섹션 3] 개별 종목 스크리닝
 # -----------------------------------------------------------------------------
-st.subheader("🎯 단타 타겟 (KIS 거래대금 상위 기반)")
+st.subheader("🎯 단타 타겟 Top 30 (우량주 매력도 점수 랭킹 순)")
 
-access_token = get_kis_token(KIS_APP_KEY, KIS_APP_SECRET)
-df_universe = get_kis_target_stocks(access_token)
+df_universe = get_kis_top_volume_stocks()
 
 if not df_universe.empty:
+    cond_price = df_universe['현재가'] >= 10000
     cond_rise = df_universe['등락률'] > 0
-    filtered_df = df_universe[cond_rise].copy()
-    
-    # 시총 데이터가 빠졌으므로 등락률과 거래대금만으로 매력도 산출
-    filtered_df['단타_매력도'] = ((filtered_df['등락률'] * 2.0) + (np.log1p(filtered_df['거래대금']) * 3.0)).round(1)
-    
-    top_30 = filtered_df.sort_values(by='단타_매력도', ascending=False).head(30)
-    
+    filtered_df = df_universe[cond_price & cond_rise].copy()
+
+    filtered_df['우량주_매력도_점수'] = (
+        (filtered_df['등락률'] * 1.5) + 
+        (np.log1p(filtered_df['거래대금']) * 2.5)
+    ).round(1)
+
+    top_30 = filtered_df.sort_values(by='우량주_매력도_점수', ascending=False).head(30)
+
     output_df = pd.DataFrame({
-        '매력도 점수': top_30['단타_매력도'].apply(lambda x: f"{x} 점"),
+        '매력도 점수': top_30['우량주_매력도_점수'].apply(lambda x: f"{x} 점"),
         '종목명': top_30['종목명'],
         '현재가': top_30['현재가'].apply(lambda x: f"{int(x):,} 원"),
         '전일대비 상승률': top_30['등락률'].apply(lambda x: f"+{x:.2f} %"),
@@ -205,15 +215,23 @@ if not df_universe.empty:
         '시장': top_30['시장']
     }).reset_index(drop=True)
 
-    selected_rows = st.dataframe(output_df, use_container_width=True, selection_mode="single-row", on_select="rerun")
+    st.markdown("💡 **표에서 관심 있는 종목의 행을 클릭**하시면 하단에 1분봉 차트가 생성됩니다.")
+
+    selected_rows = st.dataframe(
+        output_df, 
+        use_container_width=True, 
+        selection_mode="single-row",
+        on_select="rerun"
+    )
 else:
-    st.warning("⚠️ 한투 API 데이터를 불러오지 못했습니다. API 키 및 토큰 상태를 확인하세요.")
+    st.error("데이터를 불러오지 못했습니다. 장외 시간이거나 API 호출 초과일 수 있습니다.")
     output_df = pd.DataFrame()
 
 # -----------------------------------------------------------------------------
-# [섹션 4] 한투 API 기반 당일 1분봉 시각화
+# [섹션 4] 종목 클릭 시 KIS 1분봉 시각화
 # -----------------------------------------------------------------------------
 st.markdown("---")
+
 selected_idx = 0
 if hasattr(selected_rows, 'selection') and len(selected_rows.selection.rows) > 0:
     selected_idx = selected_rows.selection.rows[0]
@@ -223,68 +241,66 @@ if not output_df.empty:
     target_name = output_df.iloc[selected_idx]['종목명']
     target_price = output_df.iloc[selected_idx]['현재가']
     target_change = output_df.iloc[selected_idx]['전일대비 상승률']
+    target_vol = output_df.iloc[selected_idx]['거래대금(백만)']
     
-    st.markdown(f"### 📈 {target_name} ({target_code}) 실시간 1분봉")
+    st.markdown(f"""
+    <div style='padding: 10px 0; border-bottom: 1px solid #ddd; margin-bottom: 15px;'>
+        <span style='font-size: 20px; font-weight: bold;'>{target_name}</span> 
+        <span style='font-size: 14px; font-weight: bold;'>{target_price}</span>
+        <span style='font-size: 14px; color: #e12929; margin-left: 5px;'>{target_change}</span>
+        <span style='font-size: 14px; color: #888; margin-left: 10px;'>거래대금 {target_vol}백만</span>
+    </div>
+    """, unsafe_allow_html=True)
     
-    with st.spinner("한투 API에서 실시간 분봉 데이터를 가져오는 중입니다..."):
-        # KIS 당일분봉조회 API 호출
-        path_chart = "uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice"
-        headers_chart = {
-            "content-type": "application/json; charset=utf-8",
-            "authorization": f"Bearer {access_token}",
-            "appKey": KIS_APP_KEY,
-            "appSecret": KIS_APP_SECRET,
-            "tr_id": "FHKST03010200",
-            "custtype": "P"
-        }
-        params_chart = {
+    with st.spinner(f"[{target_name}] KIS 1분봉 데이터를 불러오는 중입니다..."):
+        url = f"{URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice"
+        headers = get_common_headers("FHKST03010200")
+        
+        now_time = datetime.now(KST).strftime("%H%M%S")
+        params = {
             "FID_ETC_CLS_CODE": "",
             "FID_COND_MRKT_DIV_CODE": "J",
             "FID_INPUT_ISCD": target_code,
-            "FID_INPUT_HOUR_1": "153000", # 오후 3시 30분 기준 역산
-            "FID_PW_DATA_INCU_YN": "N"
+            "FID_INPUT_HOUR_1": now_time,
+            "FID_PW_DATA_INCU_YN": "Y"
         }
         
-        res_chart = requests.get(f"{URL_BASE}/{path_chart}", headers=headers_chart, params=params_chart)
-        
-        if res_chart.status_code == 200:
-            chart_data = res_chart.json().get('output2', [])
+        try:
+            res = requests.get(url, headers=headers, params=params)
+            res_data = res.json()
             
-            if chart_data:
-                # 데이터를 DataFrame으로 변환 및 역순(과거->현재) 정렬
-                df_chart = pd.DataFrame(chart_data)
-                df_chart = df_chart[['stck_cntg_hour', 'stck_prpr']].dropna()
-                df_chart = df_chart[df_chart['stck_cntg_hour'] != '']
-                df_chart['stck_prpr'] = pd.to_numeric(df_chart['stck_prpr'])
-                df_chart = df_chart.iloc[::-1].reset_index(drop=True)
+            if res_data['rt_cd'] == '0' and 'output2' in res_data:
+                min_data = res_data['output2'][::-1] 
                 
-                # 시간 형식 포맷팅
-                df_chart['time'] = pd.to_datetime(df_chart['stck_cntg_hour'], format='%H%M%S').dt.time
-                df_chart['time_str'] = df_chart['time'].astype(str)
+                times = [f"{m['stck_bsop_date']} {m['stck_cntg_hour']}" for m in min_data]
+                closes = [float(m['stck_prpr']) for m in min_data]
                 
-                fig_stock = go.Figure()
-                fig_stock.add_trace(go.Scatter(
-                    x=df_chart['time_str'],
-                    y=df_chart['stck_prpr'],
-                    mode='lines',
-                    line=dict(color='#4c6198', width=2),
-                    name="현재가"
-                ))
+                date_idx = pd.to_datetime(times, format="%Y%m%d %H%M%S")
                 
-                min_price, max_price = df_chart['stck_prpr'].min(), df_chart['stck_prpr'].max()
-                margin = (max_price - min_price) * 0.1 if min_price != max_price else min_price * 0.01
+                df_min = pd.DataFrame({"Close": closes}, index=date_idx)
+                df_min = df_min[df_min['Close'] > 0]
                 
-                fig_stock.update_layout(
-                    template="plotly_white",
-                    height=400,
-                    margin=dict(l=10, r=40, t=20, b=20),
-                    xaxis=dict(showgrid=True, gridcolor='#f0f0f0', tickangle=-45, nticks=15),
-                    yaxis=dict(side='right', showgrid=True, gridcolor='#f0f0f0', range=[min_price - margin, max_price + margin]),
-                    hovermode='x unified'
-                )
-                
-                st.plotly_chart(fig_stock, use_container_width=True)
+                if not df_min.empty:
+                    min_price = df_min['Close'].min()
+                    max_price = df_min['Close'].max()
+                    price_margin = (max_price - min_price) * 0.1 if max_price != min_price else min_price * 0.01
+                    
+                    fig_stock = go.Figure()
+                    fig_stock.add_trace(go.Scatter(
+                        x=df_min.index, y=df_min['Close'], mode='lines', 
+                        line=dict(color='#4c6198', width=1.5), name="현재가"
+                    ))
+                    
+                    fig_stock.update_layout(
+                        template="plotly_white", height=500, margin=dict(l=10, r=60, t=20, b=20),
+                        xaxis=dict(showgrid=True, gridcolor='#f0f0f0', type='date', tickformat='%H:%M'),
+                        yaxis=dict(side='right', showgrid=True, gridcolor='#f0f0f0', tickformat=',', range=[min_price - price_margin, max_price + price_margin]),
+                        hovermode='x unified'
+                    )
+                    st.plotly_chart(fig_stock, use_container_width=True)
+                else:
+                    st.warning("유효한 분봉 데이터가 없습니다.")
             else:
-                st.warning("분봉 데이터가 존재하지 않습니다.")
-        else:
-            st.error(f"차트 데이터 조회 실패: {res_chart.json().get('msg1')}")
+                st.error(f"분봉 조회 실패: {res_data.get('msg1', '알 수 없는 오류')}")
+        except Exception as e:
+            st.error(f"분봉 API 호출 중 에러 발생: {e}")
