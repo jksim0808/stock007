@@ -2,25 +2,28 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-import FinanceDataReader as fdr
 import requests
 import json
 from datetime import datetime, timedelta, timezone
 
 # -----------------------------------------------------------------------------
-# [설정] 한국투자증권 API 키 입력 (실제 발급받은 키로 변경하세요)
+# [설정] 한국투자증권 API KEY (Streamlit Secrets 활용)
 # -----------------------------------------------------------------------------
-KIS_APP_KEY = "YOUR_APP_KEY_HERE"
-KIS_APP_SECRET = "YOUR_APP_SECRET_HERE"
+try:
+    APP_KEY = st.secrets["KIS_APP_KEY"]
+    APP_SECRET = st.secrets["KIS_APP_SECRET"] # secret 키도 동일한 방식으로 넣었다고 가정합니다.
+except KeyError:
+    st.error("⚠️ Streamlit secrets에 'KIS_APP_KEY' 또는 'KIS_APP_SECRET'이 설정되지 않았습니다.")
+    st.info("로컬 환경의 경우 `.streamlit/secrets.toml` 파일을 확인해주세요.")
+    st.stop()
 
-# 실전투자 URL: https://openapi.koreainvestment.com:9443
-# 모의투자 URL: https://openapivts.koreainvestment.com:29443
-URL_BASE = "https://openapi.koreainvestment.com:9443" 
+URL_BASE = "https://openapi.koreainvestment.com:9443" # 모의투자는 https://openapivts.koreainvestment.com:29443
 
 # 페이지 설정
-st.set_page_config(layout="wide", page_title="국내주식 실시간 단타 스캐너 (KIS 연동)")
-st.title("🚀 실시간 단타 및 시장 동향 대시보드 (한투 API)")
+st.set_page_config(layout="wide", page_title="국내주식 실시간 단타 스캐너 (KIS API)")
+st.title("🚀 실시간 단타 및 시장 동향 대시보드 (한국투자증권 연동)")
 
+# 한국 시간(KST) 설정
 KST = timezone(timedelta(hours=9))
 
 # -----------------------------------------------------------------------------
