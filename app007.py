@@ -5,7 +5,7 @@ import plotly.graph_objects as go
 import requests
 import json
 from datetime import datetime, timedelta, timezone
-
+import FinanceDataReader as fdr
 # -----------------------------------------------------------------------------
 # [설정] 한국투자증권 API KEY (Streamlit Secrets 활용)
 # -----------------------------------------------------------------------------
