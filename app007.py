@@ -7,6 +7,16 @@ import json
 from datetime import datetime, timedelta, timezone
 import FinanceDataReader as fdr 
 
+import streamlit as st
+import pandas as pd
+import numpy as np
+import plotly.graph_objects as go
+import requests
+import json
+from datetime import datetime, timedelta, timezone
+import FinanceDataReader as fdr 
+from streamlit_autorefresh import st_autorefresh 
+
 # -----------------------------------------------------------------------------
 # [설정] 한국투자증권 API KEY (Streamlit Secrets 활용)
 # -----------------------------------------------------------------------------
@@ -25,6 +35,21 @@ URL_BASE = "https://openapi.koreainvestment.com:9443"
 # 페이지 설정
 st.set_page_config(layout="wide", page_title="국내주식 실시간 단타 스캐너 (KIS API)")
 st.title("🚀 실시간 단타 및 시장 동향 대시보드")
+
+# 👇 [추가 2] 자동 스캐닝 토글 버튼 및 타이머 로직 추가
+col_t1, col_t2 = st.columns([1, 4])
+with col_t1:
+    # 토글 스위치 (기본값은 꺼짐)
+    auto_refresh = st.toggle("⏱️ 1분 자동 스캐닝 켜기", value=False)
+
+if auto_refresh:
+    # 토글이 켜지면 60,000 밀리초(60초)마다 앱을 자동으로 다시 실행합니다.
+    # 2분을 원하시면 120000으로 수정하시면 됩니다.
+    st_autorefresh(interval=60000, limit=1000, key="auto_scanner_refresh")
+    st.toast("🔄 스캐너가 실시간(1분 단위)으로 돌파/눌림목을 감시 중입니다!", icon="👀")
+    
+    # 자동 갱신 시 캐시된 종목 데이터를 강제로 지워 항상 최신 상태를 유지하게 합니다.
+    get_kis_top_trading_value_stocks.clear()
 
 KST = timezone(timedelta(hours=9))
 
