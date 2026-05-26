@@ -6,7 +6,6 @@ import requests
 import json
 from datetime import datetime, timedelta, timezone
 import FinanceDataReader as fdr 
-
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -15,8 +14,7 @@ import requests
 import json
 from datetime import datetime, timedelta, timezone
 import FinanceDataReader as fdr 
-from streamlit_autorefresh 
-import st_autorefresh 
+from streamlit_autorefresh import st_autorefresh 
 
 # -----------------------------------------------------------------------------
 # [설정] 한국투자증권 API KEY (Streamlit Secrets 활용)
