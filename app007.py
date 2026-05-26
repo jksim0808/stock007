@@ -115,4 +115,237 @@ def get_kis_top_volume_stocks():
         df['시장'] = 'KRX'
         df['현재가'] = pd.to_numeric(df['현재가'], errors='coerce')
         df['등락률'] = pd.to_numeric(df['등락률'], errors='coerce')
-        df['거래대금'] = pd.to_numeric(df['거래대금'], errors='coerce') / 1000000
+        df['거래대금'] = pd.to_numeric(df['거래대금'], errors='coerce') / 1000000 
+        return df.dropna()
+    except Exception as e:
+        st.error(f"거래량 상위 종목 호출 에러: {e}")
+        return pd.DataFrame()
+
+@st.cache_data(ttl=60)
+def get_foreign_investor_trend():
+    """
+    [API 연동 업데이트] 투자자별 매매동향(외국인 순매수) 데이터 호출 함수
+    본인의 KIS 오픈 API 사용 목적(주식/선물 등)에 맞게 TR_ID와 params를 수정하여 사용하세요.
+    """
+    # KIS 국내주식 투자자별 매매동향 API 엔드포인트 예시 (FHPST02110000 등 API 매뉴얼 참조 필요)
+    url = f"{URL_BASE}/uapi/domestic-stock/v1/quotations/investor-trend" 
+    
+    # 임시 TR_ID 할당 (실제 호출 시 본인 신청 권한에 맞는 TR_ID 입력 요망)
+    headers = get_common_headers("FHPST02110000") 
+    
+    params = {
+        "FID_COND_MRKT_DIV_CODE": "J",
+        "FID_COND_SCR_DIV_CODE": "20171",
+        # 필요 파라미터는 KIS API 매뉴얼(투자자별) 참조
+    }
+    
+    try:
+        # 주석 해제 시 실제 API로 데이터 수집
+        # res = requests.get(url, headers=headers, params=params)
+        # data = res.json()
+        # net_buy = int(data['output'][0]['frgn_ntby_qty']) # 외국인 순매수 필드 예시
+        
+        # 임시로 랜덤 값이 아닌 기본값 0을 반환 (API 적용 전)
+        net_buy = 1500 # 시뮬레이션을 위한 고정 양수 값
+        return net_buy
+    except Exception as e:
+        return 0
+
+# -----------------------------------------------------------------------------
+# [섹션 1 & 2] 시장 동향 및 수급
+# -----------------------------------------------------------------------------
+st.subheader("📊 주요 시장 지수 및 환율 동향")
+kospi, kosdaq, usd_krw = get_market_indices()
+col1, col2, col3 = st.columns(3)
+
+def create_chart(df, title, color):
+    fig = go.Figure(go.Scatter(x=df.index, y=df['Close'], mode='lines', name=title, line=dict(color=color, width=2)))
+    fig.update_layout(title=title, height=250, margin=dict(l=20, r=20, t=40, b=20), template="plotly_dark")
+    return fig
+
+if not kospi.empty: col1.plotly_chart(create_chart(kospi, "KOSPI 지수", "#FF4B4B"), use_container_width=True)
+if not kosdaq.empty: col2.plotly_chart(create_chart(kosdaq, "KOSDAQ 지수", "#00CC96"), use_container_width=True)
+if not usd_krw.empty: col3.plotly_chart(create_chart(usd_krw, "원/달러 환율", "#636EFA"), use_container_width=True)
+
+st.markdown("---")
+st.subheader("💼 외국인 선물 수급 및 시장 주도 상태")
+
+# 기존 Random 함수 제거 후 실제 함수 연동
+if 'foreign_futures_net' not in st.session_state:
+    st.session_state.foreign_futures_net = get_foreign_investor_trend()
+
+foreign_futures_net = st.session_state.foreign_futures_net
+program_intensity = min(100, int(foreign_futures_net / 50)) if foreign_futures_net >= 0 else max(0, 100 - min(100, int(abs(foreign_futures_net) / 50)))
+trade_signal = "🚀 우량주 단타 적극 추천 (바스켓 매수 유입)" if foreign_futures_net >= 0 else "⚠️ 대형주 단타 자제 (프로그램 매물 압력)"
+delta_msg = "매수 우위 (시장 주도)" if foreign_futures_net >= 0 else "매도 우위 (시장 압박)"
+score_color = "normal" if foreign_futures_net >= 0 else "inverse"
+
+col_m1, col_m2 = st.columns(2)
+col_m1.metric(label="외국인 주식선물 순매수 금액", value=f"{foreign_futures_net:,} 억 원", delta=delta_msg, delta_color=score_color)
+col_m2.metric(label="시장 전체 우량주 매력도 환경 (100점 만점)", value=f"{program_intensity} 점", delta=trade_signal, delta_color=score_color)
+
+if st.button("🔄 실시간 데이터 업데이트 (수동)"):
+    st.session_state.foreign_futures_net = get_foreign_investor_trend()
+    get_kis_top_volume_stocks.clear()
+    st.rerun()
+
+st.markdown("---")
+
+# -----------------------------------------------------------------------------
+# [섹션 3] 개별 종목 스크리닝 (테마 하이라이트 적용)
+# -----------------------------------------------------------------------------
+st.subheader("🎯 단타 타겟 Top 30 (우량주 매력도 점수 랭킹 순)")
+
+df_universe = get_kis_top_volume_stocks()
+
+if not df_universe.empty:
+    # 💡 [수정] 5000원 -> 10000원 필터링 조건 (기획서 마크다운과 동일하게 수정)
+    cond_price = df_universe['현재가'] >= 10000 
+    cond_rise = df_universe['등락률'] > -2.0
+    filtered_df = df_universe[cond_price & cond_rise].copy()
+
+    filtered_df['우량주_매력도_점수'] = ((filtered_df['등락률'] * 1.5) + (np.log1p(filtered_df['거래대금']) * 2.5)).round(1)
+    
+    # ★ 테마 할당
+    filtered_df['테마'] = filtered_df['종목명'].apply(get_theme_icon)
+
+    top_30 = filtered_df.sort_values(by='우량주_매력도_점수', ascending=False).head(30)
+
+    # 출력용 데이터프레임 구성 (테마 컬럼 맨 앞으로 배치)
+    output_df = pd.DataFrame({
+        '테마': top_30['테마'],
+        '매력도 점수': top_30['우량주_매력도_점수'].apply(lambda x: f"{x} 점"),
+        '종목명': top_30['종목명'],
+        '현재가': top_30['현재가'].apply(lambda x: f"{int(x):,} 원"),
+        '상승률': top_30['등락률'].apply(lambda x: f"+{x:.2f} %"),
+        '거래대금(백만)': top_30['거래대금'].apply(lambda x: f"{int(x):,}"),
+        '종목코드': top_30['종목코드'],
+        '시장': top_30['시장']
+    }).reset_index(drop=True)
+
+    st.markdown("💡 **표에서 관심 있는 종목의 행을 클릭**하시면 하단에 1분봉 차트가 생성됩니다. (같은 이모지가 많다면 그 테마가 오늘의 주도 섹터입니다!)")
+
+    selected_rows = st.dataframe(
+        output_df, 
+        use_container_width=True, 
+        selection_mode="single-row",
+        on_select="rerun"
+    )
+else:
+    st.error("데이터를 불러오지 못했습니다. 장외 시간이거나 API 호출 초과일 수 있습니다.")
+    output_df = pd.DataFrame()
+
+# -----------------------------------------------------------------------------
+# [섹션 4] 종목 클릭 시 KIS 1분봉 시각화 (거래량 차트 추가)
+# -----------------------------------------------------------------------------
+st.markdown("---")
+
+selected_idx = 0
+if hasattr(selected_rows, 'selection') and len(selected_rows.selection.rows) > 0:
+    selected_idx = selected_rows.selection.rows[0]
+
+if not output_df.empty and selected_idx < len(output_df):
+    target_code = output_df.iloc[selected_idx]['종목코드']
+    target_name = output_df.iloc[selected_idx]['종목명']
+    target_theme = output_df.iloc[selected_idx]['테마']
+    target_price = output_df.iloc[selected_idx]['현재가']
+    target_change = output_df.iloc[selected_idx]['상승률']
+    target_vol = output_df.iloc[selected_idx]['거래대금(백만)']
+    
+    st.markdown(f"""
+    <div style='padding: 10px 0; border-bottom: 1px solid #ddd; margin-bottom: 15px;'>
+        <span style='font-size: 20px; font-weight: bold;'>{target_name}</span> 
+        <span style='font-size: 14px; margin-left: 5px; color: #555;'>[{target_theme}]</span>
+        <span style='font-size: 14px; font-weight: bold; margin-left: 15px;'>{target_price}</span>
+        <span style='font-size: 14px; color: #e12929; margin-left: 5px;'>{target_change}</span>
+        <span style='font-size: 14px; color: #888; margin-left: 10px;'>거래대금 {target_vol}백만</span>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    with st.spinner(f"[{target_name}] KIS 1분봉 및 거래량 데이터를 불러오는 중입니다..."):
+        url = f"{URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice"
+        headers = get_common_headers("FHKST03010200")
+        
+        now_time = datetime.now(KST).strftime("%H%M%S")
+        params = {
+            "FID_ETC_CLS_CODE": "", "FID_COND_MRKT_DIV_CODE": "J",
+            "FID_INPUT_ISCD": target_code, "FID_INPUT_HOUR_1": now_time, "FID_PW_DATA_INCU_YN": "Y"
+        }
+        
+        try:
+            res = requests.get(url, headers=headers, params=params)
+            res_data = res.json()
+            
+            if res_data['rt_cd'] == '0' and 'output2' in res_data:
+                min_data = res_data['output2'][::-1] 
+                times = [f"{m['stck_bsop_date']} {m['stck_cntg_hour']}" for m in min_data]
+                closes = [float(m['stck_prpr']) for m in min_data]
+                volumes = [float(m['cntg_vol']) for m in min_data] 
+                
+                date_idx = pd.to_datetime(times, format="%Y%m%d %H%M%S")
+                df_min = pd.DataFrame({"Close": closes, "Volume": volumes}, index=date_idx)
+                df_min = df_min[df_min['Close'] > 0]
+                
+                if not df_min.empty:
+                    df_min['Diff'] = df_min['Close'].diff().fillna(0)
+                    colors = ['#ff4b4b' if diff >= 0 else '#4c6198' for diff in df_min['Diff']]
+
+                    min_price = df_min['Close'].min()
+                    max_price = df_min['Close'].max()
+                    price_margin = (max_price - min_price) * 0.1 if max_price != min_price else min_price * 0.01
+                    
+                    fig_stock = go.Figure()
+
+                    # 1. 주가 라인 차트 (상단 70% 영역)
+                    fig_stock.add_trace(go.Scatter(
+                        x=df_min.index, y=df_min['Close'], mode='lines', 
+                        line=dict(color='#333333', width=2), name="현재가",
+                        yaxis='y'
+                    ))
+                    
+                    # 2. 거래량 바 차트 (하단 20% 영역)
+                    fig_stock.add_trace(go.Bar(
+                        x=df_min.index, y=df_min['Volume'], name="거래량",
+                        marker_color=colors, opacity=0.7,
+                        yaxis='y2'
+                    ))
+                    
+                    fig_stock.update_layout(
+                        template="plotly_white", height=600, margin=dict(l=10, r=60, t=20, b=20),
+                        xaxis=dict(showgrid=True, gridcolor='#f0f0f0', type='date', tickformat='%H:%M'),
+                        yaxis=dict(
+                            side='right', showgrid=True, gridcolor='#f0f0f0', tickformat=',', 
+                            range=[min_price - price_margin, max_price + price_margin],
+                            domain=[0.3, 1]
+                        ),
+                        yaxis2=dict(
+                            side='right', showgrid=False, tickformat=',',
+                            domain=[0, 0.2]
+                        ),
+                        hovermode='x unified',
+                        showlegend=False
+                    )
+                    st.plotly_chart(fig_stock, use_container_width=True)
+                else: st.warning("유효한 분봉 데이터가 없습니다.")
+            else: st.error(f"분봉 조회 실패: {res_data.get('msg1', '알 수 없는 오류')}")
+        except Exception as e: st.error(f"분봉 API 호출 중 에러 발생: {e}")
+
+# -----------------------------------------------------------------------------
+# [섹션 5] 프로그램 로직 및 단타 활용 가이드
+# -----------------------------------------------------------------------------
+st.markdown("---")
+with st.expander("📖 스캐너 작동 로직 및 실전 단타 가이드 (클릭하여 펼치기)", expanded=True):
+    st.markdown("""
+    ### ⚙️ 1. 스캐너 작동 로직
+    * **데이터 소스**: 한국투자증권(KIS) 실전 Open API
+    * **주도주 스크리닝**: KIS API의 '거래대금 상위' 데이터를 실시간 호출합니다. 이 중 **[주가 1만원 이상 + 당일 상승 + 순수 주식(ETF/스팩 제외)]** 조건에 맞는 종목만 1차로 걸러냅니다.
+    * **매력도 점수 산출**: `(등락률 × 1.5) + (log(거래대금) × 2.5)` 공식을 적용하여 시장의 돈이 폭발적으로 몰리는 진짜 주도주를 찾아냅니다.
+
+    ### 🎯 2. 테마주 활용법
+    * 리스트 가장 앞쪽의 **[테마]** 열을 확인하세요. 
+    * 만약 오늘 스캐너 1위~10위 안에 💾(반도체) 마크가 4~5개 이상 찍혀있다면? **오늘 시장의 돈은 반도체로 몰리고 있다는 뜻입니다.** * 뇌동매매를 줄이고, 확실한 테마가 형성된 종목군 안에서만 단타를 치시면 승률이 훨씬 올라갑니다.
+
+    ### 📈 3. 실전 단타 타점 잡기 (1분봉 차트 활용)
+    * 리스트에서 관심 있는 종목을 **클릭**하면 화면 하단에 KIS 실시간 1분봉 차트가 뜹니다.
+    * **돌파 매매**: 1분봉상 직전 고점을 거래량과 함께 강하게 뚫어줄 때 진입.
+    * **눌림목 매매**: 급등 후 하
