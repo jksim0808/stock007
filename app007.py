@@ -41,14 +41,13 @@ THEME_DICT = {
 }
 
 def get_theme_icon(stock_name):
-    """종목명을 바탕으로 테마 아이콘을 반환하는 함수"""
     for theme, keywords in THEME_DICT.items():
         if any(keyword in stock_name for keyword in keywords):
             return theme
-    return "▪️ 개별주" # 테마에 속하지 않은 종목
+    return "▪️ 개별주"
 
 # -----------------------------------------------------------------------------
-# 1. KIS API 인증 및 토큰 발급 (캐시 만료 방어 로직 추가)
+# 1. KIS API 인증 및 토큰 발급
 # -----------------------------------------------------------------------------
 @st.cache_resource(ttl=3600*20)
 def get_access_token():
@@ -65,18 +64,16 @@ def get_access_token():
 
 def get_common_headers(tr_id):
     token = get_access_token()
-    # 토큰이 유효하지 않을 경우 캐시를 지우고 재시도
     if not token:
         get_access_token.clear()
         token = get_access_token()
-        
     return {
         "Content-Type": "application/json", "authorization": f"Bearer {token}",
         "appKey": APP_KEY, "appSecret": APP_SECRET, "tr_id": tr_id
     }
 
 # -----------------------------------------------------------------------------
-# 2. 데이터 로드 함수
+# 2. 데이터 로드 함수 (대형 우량주 포착을 위한 거래대금 중심 로직으로 변경)
 # -----------------------------------------------------------------------------
 @st.cache_data(ttl=60)
 def get_market_indices():
@@ -88,66 +85,78 @@ def get_market_indices():
     return kospi, kosdaq, usd_krw
 
 @st.cache_data(ttl=30)
-def get_kis_top_volume_stocks():
+def get_kis_top_trading_value_stocks():
+    """
+    [수정됨] 가격대별(중소형/대형)로 각각 API를 호출한 뒤, 
+    '거래대금' 순으로 병합 및 재정렬하여 진짜 돈이 몰리는 대형주를 놓치지 않도록 설계
+    """
     url = f"{URL_BASE}/uapi/domestic-stock/v1/quotations/volume-rank"
     headers = get_common_headers("FHPST01710000")
-    params = {
+    
+    # 1. 중소형/일반 테마주 포착 (1만 원 ~ 8만 원)
+    params_mid = {
         "FID_COND_MRKT_DIV_CODE": "J", "FID_COND_SCR_DIV_CODE": "20171",
-        "FID_INPUT_ISCD": "0000", "FID_DIV_CLS_CODE": "1", # 보통주(ETF 제외)
+        "FID_INPUT_ISCD": "0000", "FID_DIV_CLS_CODE": "1", 
         "FID_BLNG_CLS_CODE": "0", "FID_TRGT_CLS_CODE": "111111111", 
-        "FID_TRGT_EXLS_CLS_CODE": "111111", "FID_INPUT_PRICE_1": "1000", 
-        "FID_INPUT_PRICE_2": "1000000", "FID_VOL_CNT": "", "FID_INPUT_DATE_1": ""
+        "FID_TRGT_EXLS_CLS_CODE": "111111", 
+        "FID_INPUT_PRICE_1": "10000", "FID_INPUT_PRICE_2": "80000", 
+        "FID_VOL_CNT": "", "FID_INPUT_DATE_1": ""
     }
     
-    try:
-        res = requests.get(url, headers=headers, params=params)
-        res.raise_for_status()
-        data = res.json()
-        if data['rt_cd'] != '0': return pd.DataFrame()
-        
-        df = pd.DataFrame(data['output'])[['hts_kor_isnm', 'mksc_shrn_iscd', 'stck_prpr', 'prdy_ctrt', 'acml_tr_pbmn']]
-        df.columns = ['종목명', '종목코드', '현재가', '등락률', '거래대금']
-        
-        exclude_keywords = ['KODEX', 'TIGER', 'KBSTAR', 'ACE', 'ARIRANG', 'HANARO', 'KOSEF', 'SOL', 'TIMEFOLIO', 'WOORI', '히어로즈', '마이티', '스팩', 'ETN']
-        pattern = '|'.join(exclude_keywords)
-        df = df[~df['종목명'].str.contains(pattern, case=False, regex=True)]
-        
-        df['시장'] = 'KRX'
-        df['현재가'] = pd.to_numeric(df['현재가'], errors='coerce')
-        df['등락률'] = pd.to_numeric(df['등락률'], errors='coerce')
-        df['거래대금'] = pd.to_numeric(df['거래대금'], errors='coerce') / 1000000 
-        return df.dropna()
-    except Exception as e:
-        st.error(f"거래량 상위 종목 호출 에러: {e}")
+    # 2. 대형 우량주 포착 (8만 원 ~ 200만 원) - SK하이닉스, 삼성전자 등
+    params_large = {
+        "FID_COND_MRKT_DIV_CODE": "J", "FID_COND_SCR_DIV_CODE": "20171",
+        "FID_INPUT_ISCD": "0000", "FID_DIV_CLS_CODE": "1", 
+        "FID_BLNG_CLS_CODE": "0", "FID_TRGT_CLS_CODE": "111111111", 
+        "FID_TRGT_EXLS_CLS_CODE": "111111", 
+        "FID_INPUT_PRICE_1": "80000", "FID_INPUT_PRICE_2": "2000000", 
+        "FID_VOL_CNT": "", "FID_INPUT_DATE_1": ""
+    }
+    
+    df_list = []
+    for params in [params_mid, params_large]:
+        try:
+            res = requests.get(url, headers=headers, params=params)
+            res.raise_for_status()
+            data = res.json()
+            if data['rt_cd'] == '0' and 'output' in data:
+                df_temp = pd.DataFrame(data['output'])[['hts_kor_isnm', 'mksc_shrn_iscd', 'stck_prpr', 'prdy_ctrt', 'acml_tr_pbmn']]
+                df_list.append(df_temp)
+        except Exception as e:
+            continue
+            
+    if not df_list:
         return pd.DataFrame()
+        
+    # 두 리스트 병합
+    df = pd.concat(df_list, ignore_index=True)
+    df.columns = ['종목명', '종목코드', '현재가', '등락률', '거래대금']
+    
+    # ETF, 스팩 등 불필요 종목 필터링
+    exclude_keywords = ['KODEX', 'TIGER', 'KBSTAR', 'ACE', 'ARIRANG', 'HANARO', 'KOSEF', 'SOL', 'TIMEFOLIO', 'WOORI', '히어로즈', '마이티', '스팩', 'ETN']
+    pattern = '|'.join(exclude_keywords)
+    df = df[~df['종목명'].str.contains(pattern, case=False, regex=True)]
+    
+    df['시장'] = 'KRX'
+    df['현재가'] = pd.to_numeric(df['현재가'], errors='coerce')
+    df['등락률'] = pd.to_numeric(df['등락률'], errors='coerce')
+    df['거래대금'] = pd.to_numeric(df['거래대금'], errors='coerce') / 1000000 
+    
+    # ★ 핵심: 거래량 순서가 아닌 '거래대금'을 기준으로 랭킹 재정렬
+    df = df.sort_values(by='거래대금', ascending=False).drop_duplicates(subset=['종목코드'])
+    return df.dropna()
 
 @st.cache_data(ttl=60)
 def get_foreign_investor_trend():
-    """
-    [API 연동 업데이트] 투자자별 매매동향(외국인 순매수) 데이터 호출 함수
-    본인의 KIS 오픈 API 사용 목적(주식/선물 등)에 맞게 TR_ID와 params를 수정하여 사용하세요.
-    """
-    # KIS 국내주식 투자자별 매매동향 API 엔드포인트 예시 (FHPST02110000 등 API 매뉴얼 참조 필요)
     url = f"{URL_BASE}/uapi/domestic-stock/v1/quotations/investor-trend" 
-    
-    # 임시 TR_ID 할당 (실제 호출 시 본인 신청 권한에 맞는 TR_ID 입력 요망)
     headers = get_common_headers("FHPST02110000") 
-    
     params = {
         "FID_COND_MRKT_DIV_CODE": "J",
         "FID_COND_SCR_DIV_CODE": "20171",
-        # 필요 파라미터는 KIS API 매뉴얼(투자자별) 참조
     }
-    
     try:
-        # 주석 해제 시 실제 API로 데이터 수집
-        # res = requests.get(url, headers=headers, params=params)
-        # data = res.json()
-        # net_buy = int(data['output'][0]['frgn_ntby_qty']) # 외국인 순매수 필드 예시
-        
-        # 임시로 랜덤 값이 아닌 기본값 0을 반환 (API 적용 전)
-        net_buy = 1500 # 시뮬레이션을 위한 고정 양수 값
-        return net_buy
+        # 본인 API 연동 전까지 화면 에러 방지를 위한 임시 리턴값
+        return 1500 
     except Exception as e:
         return 0
 
@@ -170,7 +179,6 @@ if not usd_krw.empty: col3.plotly_chart(create_chart(usd_krw, "원/달러 환율
 st.markdown("---")
 st.subheader("💼 외국인 선물 수급 및 시장 주도 상태")
 
-# 기존 Random 함수 제거 후 실제 함수 연동
 if 'foreign_futures_net' not in st.session_state:
     st.session_state.foreign_futures_net = get_foreign_investor_trend()
 
@@ -186,32 +194,26 @@ col_m2.metric(label="시장 전체 우량주 매력도 환경 (100점 만점)", 
 
 if st.button("🔄 실시간 데이터 업데이트 (수동)"):
     st.session_state.foreign_futures_net = get_foreign_investor_trend()
-    get_kis_top_volume_stocks.clear()
+    get_kis_top_trading_value_stocks.clear()
     st.rerun()
 
 st.markdown("---")
 
 # -----------------------------------------------------------------------------
-# [섹션 3] 개별 종목 스크리닝 (테마 하이라이트 적용)
+# [섹션 3] 개별 종목 스크리닝
 # -----------------------------------------------------------------------------
 st.subheader("🎯 단타 타겟 Top 30 (우량주 매력도 점수 랭킹 순)")
 
-df_universe = get_kis_top_volume_stocks()
+df_universe = get_kis_top_trading_value_stocks()
 
 if not df_universe.empty:
-    # 💡 [수정] 5000원 -> 10000원 필터링 조건 (기획서 마크다운과 동일하게 수정)
-    cond_price = df_universe['현재가'] >= 10000 
     cond_rise = df_universe['등락률'] > -2.0
-    filtered_df = df_universe[cond_price & cond_rise].copy()
+    filtered_df = df_universe[cond_rise].copy()
 
     filtered_df['우량주_매력도_점수'] = ((filtered_df['등락률'] * 1.5) + (np.log1p(filtered_df['거래대금']) * 2.5)).round(1)
-    
-    # ★ 테마 할당
     filtered_df['테마'] = filtered_df['종목명'].apply(get_theme_icon)
-
     top_30 = filtered_df.sort_values(by='우량주_매력도_점수', ascending=False).head(30)
 
-    # 출력용 데이터프레임 구성 (테마 컬럼 맨 앞으로 배치)
     output_df = pd.DataFrame({
         '테마': top_30['테마'],
         '매력도 점수': top_30['우량주_매력도_점수'].apply(lambda x: f"{x} 점"),
@@ -236,7 +238,7 @@ else:
     output_df = pd.DataFrame()
 
 # -----------------------------------------------------------------------------
-# [섹션 4] 종목 클릭 시 KIS 1분봉 시각화 (거래량 차트 추가)
+# [섹션 4] 종목 클릭 시 KIS 1분봉 시각화 
 # -----------------------------------------------------------------------------
 st.markdown("---")
 
@@ -262,7 +264,7 @@ if not output_df.empty and selected_idx < len(output_df):
     </div>
     """, unsafe_allow_html=True)
     
-    with st.spinner(f"[{target_name}] KIS 1분봉 및 거래량 데이터를 불러오는 중입니다..."):
+    with st.spinner(f"[{target_name}] KIS 1분봉 데이터를 불러오는 중입니다..."):
         url = f"{URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice"
         headers = get_common_headers("FHKST03010200")
         
@@ -296,34 +298,22 @@ if not output_df.empty and selected_idx < len(output_df):
                     
                     fig_stock = go.Figure()
 
-                    # 1. 주가 라인 차트 (상단 70% 영역)
                     fig_stock.add_trace(go.Scatter(
                         x=df_min.index, y=df_min['Close'], mode='lines', 
-                        line=dict(color='#333333', width=2), name="현재가",
-                        yaxis='y'
+                        line=dict(color='#333333', width=2), name="현재가", yaxis='y'
                     ))
                     
-                    # 2. 거래량 바 차트 (하단 20% 영역)
                     fig_stock.add_trace(go.Bar(
                         x=df_min.index, y=df_min['Volume'], name="거래량",
-                        marker_color=colors, opacity=0.7,
-                        yaxis='y2'
+                        marker_color=colors, opacity=0.7, yaxis='y2'
                     ))
                     
                     fig_stock.update_layout(
                         template="plotly_white", height=600, margin=dict(l=10, r=60, t=20, b=20),
                         xaxis=dict(showgrid=True, gridcolor='#f0f0f0', type='date', tickformat='%H:%M'),
-                        yaxis=dict(
-                            side='right', showgrid=True, gridcolor='#f0f0f0', tickformat=',', 
-                            range=[min_price - price_margin, max_price + price_margin],
-                            domain=[0.3, 1]
-                        ),
-                        yaxis2=dict(
-                            side='right', showgrid=False, tickformat=',',
-                            domain=[0, 0.2]
-                        ),
-                        hovermode='x unified',
-                        showlegend=False
+                        yaxis=dict(side='right', showgrid=True, gridcolor='#f0f0f0', tickformat=',', range=[min_price - price_margin, max_price + price_margin], domain=[0.3, 1]),
+                        yaxis2=dict(side='right', showgrid=False, tickformat=',', domain=[0, 0.2]),
+                        hovermode='x unified', showlegend=False
                     )
                     st.plotly_chart(fig_stock, use_container_width=True)
                 else: st.warning("유효한 분봉 데이터가 없습니다.")
@@ -336,17 +326,18 @@ if not output_df.empty and selected_idx < len(output_df):
 st.markdown("---")
 with st.expander("📖 스캐너 작동 로직 및 실전 단타 가이드 (클릭하여 펼치기)", expanded=True):
     st.markdown("""
-    ### ⚙️ 1. 스캐너 작동 로직
+    ### ⚙️ 1. 스캐너 작동 로직 (대형주 포함 버전)
     * **데이터 소스**: 한국투자증권(KIS) 실전 Open API
-    * **주도주 스크리닝**: KIS API의 '거래대금 상위' 데이터를 실시간 호출합니다. 이 중 **[주가 1만원 이상 + 당일 상승 + 순수 주식(ETF/스팩 제외)]** 조건에 맞는 종목만 1차로 걸러냅니다.
-    * **매력도 점수 산출**: `(등락률 × 1.5) + (log(거래대금) × 2.5)` 공식을 적용하여 시장의 돈이 폭발적으로 몰리는 진짜 주도주를 찾아냅니다.
+    * **주도주 스크리닝**: API를 두 번 호출하여 '중소형주(1~8만 원)'와 '대형 우량주(8~200만 원)'의 데이터를 싹 쓸어 모은 뒤, 오직 **'당일 누적 거래대금(몰린 돈)'** 기준으로 랭킹을 다시 매겨 진짜 주도주를 뽑아냅니다.
+    * **매력도 점수 산출**: `(등락률 × 1.5) + (log(거래대금) × 2.5)` 공식을 적용하여 상승 탄력과 돈의 힘이 완벽히 맞아떨어지는 종목을 찾습니다.
 
     ### 🎯 2. 테마주 활용법
     * 리스트 가장 앞쪽의 **[테마]** 열을 확인하세요. 
-    * 만약 오늘 스캐너 1위~10위 안에 💾(반도체) 마크가 4~5개 이상 찍혀있다면? **오늘 시장의 돈은 반도체로 몰리고 있다는 뜻입니다.** * 뇌동매매를 줄이고, 확실한 테마가 형성된 종목군 안에서만 단타를 치시면 승률이 훨씬 올라갑니다.
+    * 만약 오늘 스캐너 1위~10위 안에 💾(반도체) 마크가 4~5개 이상 찍혀있다면? **오늘 시장의 돈은 반도체로 몰리고 있다는 뜻입니다.** 
+    * 뇌동매매를 줄이고, 확실한 테마가 형성된 종목군 안에서만 단타를 치시면 승률이 훨씬 올라갑니다.
 
     ### 📈 3. 실전 단타 타점 잡기 (1분봉 차트 활용)
     * 리스트에서 관심 있는 종목을 **클릭**하면 화면 하단에 KIS 실시간 1분봉 차트가 뜹니다.
     * **돌파 매매**: 1분봉상 직전 고점을 거래량과 함께 강하게 뚫어줄 때 진입.
     * **눌림목 매매**: 급등 후 하락하다가 특정 가격대에서 더 이상 빠지지 않고 지지받을 때 진입.
-    """) # <--- 가장 중요한 부분! 여기서 괄호와 따옴표 3개가 완벽히 닫혀야 합니다.
+    """)
