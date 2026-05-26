@@ -241,7 +241,7 @@ else:
     output_df = pd.DataFrame()
 
 # -----------------------------------------------------------------------------
-# [섹션 4] 종목 클릭 시 KIS 1분봉 시각화 
+# [섹션 4] 종목 클릭 시 KIS 1분봉 시각화 (돌파/눌림 신호 및 캔들차트 적용)
 # -----------------------------------------------------------------------------
 st.markdown("---")
 
@@ -267,7 +267,7 @@ if not output_df.empty and selected_idx < len(output_df):
     </div>
     """, unsafe_allow_html=True)
     
-    with st.spinner(f"[{target_name}] KIS 1분봉 데이터를 불러오는 중입니다..."):
+    with st.spinner(f"[{target_name}] 1분봉 데이터 및 매매 신호를 분석 중입니다..."):
         url = f"{URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice"
         headers = get_common_headers("FHKST03010200")
         
@@ -284,39 +284,83 @@ if not output_df.empty and selected_idx < len(output_df):
             if res_data['rt_cd'] == '0' and 'output2' in res_data:
                 min_data = res_data['output2'][::-1] 
                 times = [f"{m['stck_bsop_date']} {m['stck_cntg_hour']}" for m in min_data]
+                
+                # OHLCV (시가, 고가, 저가, 종가, 거래량) 모두 추출
+                opens = [float(m['stck_oprc']) for m in min_data]
+                highs = [float(m['stck_hgpr']) for m in min_data]
+                lows = [float(m['stck_lwpr']) for m in min_data]
                 closes = [float(m['stck_prpr']) for m in min_data]
                 volumes = [float(m['cntg_vol']) for m in min_data] 
                 
                 date_idx = pd.to_datetime(times, format="%Y%m%d %H%M%S")
-                df_min = pd.DataFrame({"Close": closes, "Volume": volumes}, index=date_idx)
+                df_min = pd.DataFrame({"Open": opens, "High": highs, "Low": lows, "Close": closes, "Volume": volumes}, index=date_idx)
                 df_min = df_min[df_min['Close'] > 0]
                 
                 if not df_min.empty:
+                    # 1. 이동평균선(MA) 및 거래량 평균 계산
+                    df_min['MA5'] = df_min['Close'].rolling(window=5).mean()
+                    df_min['MA20'] = df_min['Close'].rolling(window=20).mean()
+                    df_min['Vol_MA5'] = df_min['Volume'].rolling(window=5).mean()
+                    
+                    # 2. 🔥 돌파 신호 계산 (20분 전고점 돌파 + 5분 평균 거래량 1.5배 터짐)
+                    df_min['Prev_High_20'] = df_min['High'].shift(1).rolling(window=20).max()
+                    df_min['Breakout'] = (df_min['Close'] > df_min['Prev_High_20']) & (df_min['Volume'] > df_min['Vol_MA5'] * 1.5)
+                    
+                    # 3. 💧 눌림목 신호 계산 (20분선 우상향 중 + 주가가 20분선 근접 터치 + 거래량 감소)
+                    df_min['Pullback'] = (df_min['MA20'] > df_min['MA20'].shift(3)) & \
+                                         (df_min['Low'] <= df_min['MA20'] * 1.005) & \
+                                         (df_min['Close'] >= df_min['MA20'] * 0.998) & \
+                                         (df_min['Volume'] < df_min['Vol_MA5'])
+                    
+                    # 차트 시각화
                     df_min['Diff'] = df_min['Close'].diff().fillna(0)
                     colors = ['#ff4b4b' if diff >= 0 else '#4c6198' for diff in df_min['Diff']]
-
-                    min_price = df_min['Close'].min()
-                    max_price = df_min['Close'].max()
+                    min_price, max_price = df_min['Low'].min(), df_min['High'].max()
                     price_margin = (max_price - min_price) * 0.1 if max_price != min_price else min_price * 0.01
                     
                     fig_stock = go.Figure()
 
-                    fig_stock.add_trace(go.Scatter(
-                        x=df_min.index, y=df_min['Close'], mode='lines', 
-                        line=dict(color='#333333', width=2), name="현재가", yaxis='y'
+                    # 봉차트(Candlestick) 추가
+                    fig_stock.add_trace(go.Candlestick(
+                        x=df_min.index, open=df_min['Open'], high=df_min['High'], low=df_min['Low'], close=df_min['Close'],
+                        increasing_line_color='#ff4b4b', decreasing_line_color='#4c6198', name="주가"
                     ))
-                    
+
+                    # 5분선, 20분선 추가
+                    fig_stock.add_trace(go.Scatter(x=df_min.index, y=df_min['MA5'], mode='lines', line=dict(color='#ff9900', width=1.5), name="5분선", hoverinfo='skip'))
+                    fig_stock.add_trace(go.Scatter(x=df_min.index, y=df_min['MA20'], mode='lines', line=dict(color='#cc00ff', width=1.5), name="20분선", hoverinfo='skip'))
+
+                    # 🔥 돌파 마커 추가
+                    breakout_data = df_min[df_min['Breakout']]
+                    if not breakout_data.empty:
+                        fig_stock.add_trace(go.Scatter(
+                            x=breakout_data.index, y=breakout_data['High'] + price_margin*0.2,
+                            mode='markers+text', marker=dict(symbol='triangle-down', size=10, color='red'),
+                            text="🔥돌파", textposition="top center", textfont=dict(color='red', size=11, weight='bold'), name="돌파"
+                        ))
+
+                    # 💧 눌림목 마커 추가
+                    pullback_data = df_min[df_min['Pullback']]
+                    if not pullback_data.empty:
+                        fig_stock.add_trace(go.Scatter(
+                            x=pullback_data.index, y=pullback_data['Low'] - price_margin*0.2,
+                            mode='markers+text', marker=dict(symbol='triangle-up', size=10, color='blue'),
+                            text="💧눌림", textposition="bottom center", textfont=dict(color='blue', size=11, weight='bold'), name="눌림"
+                        ))
+
+                    # 거래량 바차트 추가
                     fig_stock.add_trace(go.Bar(
                         x=df_min.index, y=df_min['Volume'], name="거래량",
                         marker_color=colors, opacity=0.7, yaxis='y2'
                     ))
                     
                     fig_stock.update_layout(
-                        template="plotly_white", height=600, margin=dict(l=10, r=60, t=20, b=20),
-                        xaxis=dict(showgrid=True, gridcolor='#f0f0f0', type='date', tickformat='%H:%M'),
+                        template="plotly_white", height=650, margin=dict(l=10, r=60, t=30, b=20),
+                        xaxis=dict(showgrid=True, gridcolor='#f0f0f0', type='date', tickformat='%H:%M', rangeslider=dict(visible=False)),
                         yaxis=dict(side='right', showgrid=True, gridcolor='#f0f0f0', tickformat=',', range=[min_price - price_margin, max_price + price_margin], domain=[0.3, 1]),
                         yaxis2=dict(side='right', showgrid=False, tickformat=',', domain=[0, 0.2]),
-                        hovermode='x unified', showlegend=False
+                        hovermode='x unified', showlegend=True,
+                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
                     )
                     st.plotly_chart(fig_stock, use_container_width=True)
                 else: st.warning("유효한 분봉 데이터가 없습니다.")
