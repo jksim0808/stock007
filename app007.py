@@ -184,7 +184,7 @@ def get_kis_top_trading_value_stocks():
 @st.cache_data(ttl=60)
 def get_foreign_investor_trend():
     """
-    외국인 선물 순매수 크롤링 (원인 추적/디버깅 모드 탑재 🔍)
+    네이버 금융 '투자자별 매매동향' 외국인 선물 순매수 크롤링 (HTML 정밀 타격 버전 🎯)
     """
     try:
         url = "https://finance.naver.com/sise/sise_trans_style.naver"
@@ -193,37 +193,38 @@ def get_foreign_investor_trend():
         }
         res = requests.get(url, headers=headers)
         
-        # 1. 네이버가 봇으로 인식하고 튕겨냈는지 확인
-        if res.status_code != 200:
-            st.error(f"⚠️ 네이버 접속 차단됨 (상태코드: {res.status_code})")
-            return 0.0
-
+        # 한글 깨짐 방지
         res.encoding = 'euc-kr' 
+        soup = BeautifulSoup(res.text, 'html.parser')
         
-        dfs = pd.read_html(io.StringIO(res.text))
-        
-        for df in dfs:
-            df = df.dropna(how='all')
-            for _, row in df.iterrows():
-                first_col_text = str(row.iloc[0]).replace(' ', '').strip()
-                if '선물' in first_col_text:
-                    val_str = str(row.iloc[2]).replace(',', '').strip()
+        # 모든 <tr> (표의 한 줄) 태그를 하나씩 뒤집니다.
+        for tr in soup.find_all('tr'):
+            cols = tr.find_all(['th', 'td']) # 칸(Cell)들을 모두 가져옴
+            
+            if len(cols) >= 3:
+                # 첫 번째 칸의 텍스트에서 공백과 줄바꿈을 모두 제거
+                first_cell_text = cols[0].text.replace(' ', '').replace('\n', '').replace('\t', '')
+                
+                # 💡 첫 번째 칸에 '선물'이라는 글자가 있다면? 타겟 발견!
+                if '선물' in first_cell_text:
+                    # 네이버 표 구조: [0]구분, [1]개인, [2]외국인, [3]기관계
+                    foreign_val_str = cols[2].text.replace(',', '').strip()
+                    
                     try:
-                        return float(val_str)
+                        return float(foreign_val_str)
                     except ValueError:
-                        st.error(f"⚠️ 숫자 변환 실패. 가져온 값: {val_str}")
+                        st.error(f"⚠️ 숫자 변환 실패: {foreign_val_str}")
                         return 0.0
                         
-        # 2. 접속은 했는데 '선물' 글자를 표에서 못 찾았을 때
-        st.warning("⚠️ 네이버 표는 가져왔으나 '선물' 항목을 찾지 못했습니다.")
+        # 만약 여기까지 왔는데도 못 찾았다면, 네이버가 우리에게 준 화면(HTML)을 직접 띄워서 눈으로 확인합니다!
+        st.error("⚠️ 네이버 화면에서 '선물' 글자를 찾을 수 없습니다. 아래 네이버가 보낸 원본 데이터를 확인하세요.")
+        with st.expander("🔍 네이버 원본 HTML 보기"):
+            st.code(res.text[:2000], language='html')
+            
         return 0.0 
         
     except Exception as e:
-        # 3. ⭐️ 가장 흔한 원인 (라이브러리 누락)
-        if "lxml" in str(e).lower() or "html5lib" in str(e).lower():
-            st.error("🚨 [핵심 원인 발견] 파이썬에 'lxml' 모듈이 설치되지 않았습니다! 터미널에 'pip install lxml'을 쳐주세요.")
-        else:
-            st.error(f"⚠️ 크롤링 에러 상세: {e}")
+        st.error(f"⚠️ 크롤링 에러 상세: {e}")
         return 0.0
 # -----------------------------------------------------------------------------
 # [섹션 1 & 2] 시장 동향 및 수급
