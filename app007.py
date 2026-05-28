@@ -180,17 +180,41 @@ def get_kis_top_trading_value_stocks():
 
 @st.cache_data(ttl=60)
 def get_foreign_investor_trend():
-    url = f"{URL_BASE}/uapi/domestic-stock/v1/quotations/investor-trend" 
-    headers = get_common_headers("FHPST02110000") 
-    params = {
-        "FID_COND_MRKT_DIV_CODE": "J",
-        "FID_COND_SCR_DIV_CODE": "20171",
-    }
+    """
+    네이버 금융 '투자자별 매매동향' 페이지에서 
+    실시간 외국인 선물 순매수 금액을 크롤링하여 가져옵니다.
+    """
     try:
-        return 1500 
-    except Exception as e:
-        return 0
+        # 네이버 금융 투자자별 매매동향 페이지
+        url = "https://finance.naver.com/sise/sise_trans_style.naver"
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+        res = requests.get(url, headers=headers)
+        res.encoding = 'euc-kr'
 
+        # HTML 표 읽기 (환율 때 사용했던 io.StringIO 활용)
+        dfs = pd.read_html(io.StringIO(res.text))
+
+        # 보통 첫 번째 표(dfs[0])가 [투자자구분, 거래소, 코스닥, 선물, 콜옵션, 풋옵션] 데이터를 담고 있습니다.
+        df = dfs[0]
+
+        # 1. '투자자구분' 열(보통 첫 번째 열)에서 '외국인'이 있는 행을 찾음
+        foreign_row = df[df.iloc[:, 0].str.contains("외국인", na=False)]
+
+        if not foreign_row.empty:
+            # 2. 컬럼명에 '선물'이 포함된 열을 찾아 해당 값을 추출
+            target_col = [col for col in df.columns if '선물' in str(col)][0]
+            value_str = str(foreign_row[target_col].values[0])
+
+            # 3. 콤마(,) 등 불필요한 문자 제거 후 숫자로 변환 (단위: 억원)
+            net_buy = float(value_str.replace(',', '').replace('억', '').strip())
+            return net_buy
+        else:
+            return 0  # 데이터를 못 찾을 경우 0 반환
+
+    except Exception as e:
+        # 에러 발생 시 터미널에 에러 로그를 띄우고 0 반환
+        print(f"외국인 선물 수급 크롤링 에러: {e}")
+        return 0
 # -----------------------------------------------------------------------------
 # [섹션 1 & 2] 시장 동향 및 수급
 # -----------------------------------------------------------------------------
