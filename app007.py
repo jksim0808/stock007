@@ -5,7 +5,7 @@ import plotly.graph_objects as go
 import requests
 import json
 from datetime import datetime, timedelta, timezone
-import fdr 
+import FinanceDataReader as fdr
 import io
 from bs4 import BeautifulSoup
 import joblib
