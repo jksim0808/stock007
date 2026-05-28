@@ -184,11 +184,10 @@ def get_kis_top_trading_value_stocks():
 @st.cache_data(ttl=60)
 def get_foreign_investor_trend():
     """
-    네이버 금융 '투자자별 매매동향' 외국인 선물 순매수 크롤링 (강화 버전)
+    네이버 금융 '투자자별 매매동향' 외국인 선물 순매수 크롤링 (버그 수정본 💡)
     """
     try:
         url = "https://finance.naver.com/sise/sise_trans_style.naver"
-        # 봇 차단을 막기 위해 더 디테일한 User-Agent 사용
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }
@@ -198,19 +197,22 @@ def get_foreign_investor_trend():
         rows = soup.find_all('tr')
         
         for row in rows:
-            cols = row.find_all('td')
-            # 열이 4개 이상 존재하는 유의미한 행인지 검사
+            # th(제목 셀)와 td(데이터 셀)를 모두 가져옵니다.
+            cols = row.find_all(['th', 'td']) 
+            
+            # 표의 칸이 4개 이상인 유의미한 줄인지 확인
             if len(cols) >= 4:
-                # 텍스트 내부의 모든 공백, 탭, 줄바꿈 완전 제거 후 비교
                 row_name = cols[0].text.replace(' ', '').replace('\n', '').replace('\t', '')
                 
-                if '외국인' in row_name:
-                    # 선물 데이터는 4번째 칸(index 3)
-                    val_str = cols[3].text.replace(',', '').strip()
+                # 💡 핵심 수정: 가로줄(행)의 이름이 '선물'인 곳을 찾습니다. (이전엔 '외국인'으로 잘못 찾음)
+                if '선물' in row_name:
+                    # 💡 네이버 표 구조: [0]구분, [1]개인, [2]외국인, [3]기관계
+                    # 즉, 외국인 데이터는 2번째 인덱스(cols[2])에 있습니다!
+                    val_str = cols[2].text.replace(',', '').strip()
                     if val_str:
                         return float(val_str)
                         
-        return 0.0 # 데이터를 못 찾았을 경우
+        return 0.0 # 데이터를 끝내 못 찾으면 0.0 반환
         
     except Exception as e:
         print(f"외국인 선물 데이터 크롤링 에러: {e}")
@@ -230,9 +232,6 @@ def create_chart(df, title, color):
 if not kospi.empty: col1.plotly_chart(create_chart(kospi, "KOSPI 지수", "#FF4B4B"), use_container_width=True)
 if not kosdaq.empty: col2.plotly_chart(create_chart(kosdaq, "KOSDAQ 지수", "#00CC96"), use_container_width=True)
 if not usd_krw.empty: col3.plotly_chart(create_chart(usd_krw, "원/달러 환율", "#636EFA"), use_container_width=True)
-
-st.markdown("---")
-st.subheader("💼 외국인 선물 수급 및 시장 주도 상태")
 
 st.markdown("---")
 st.subheader("💼 외국인 선물 수급 및 시장 주도 상태")
