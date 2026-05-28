@@ -294,35 +294,31 @@ if not df_universe.empty:
     cond_rise = df_universe['등락률'] > -2.0
     filtered_df = df_universe[cond_rise].copy()
 
+# ==========================================================
+    # 🧠 [듀얼 AI 모델] 적용 구간
     # ==========================================================
-    # 🧠 AI 예측 모델 적용 구간
-    # ==========================================================
-    # 1. 모델이 예측에 사용할 특징(Feature) 데이터 추출
-    # (주의: 실제 모델을 학습시킬 때 사용한 컬럼 순서와 동일해야 합니다)
     X_live = filtered_df[['등락률', '거래대금', '현재가']].fillna(0)
+    model_path = "stock_dual_model.pkl" # 새로 만든 듀얼 모델 파일명으로 변경
     
-    model_path = "stock_model.pkl" # 학습된 AI 모델 파일명
-    
-    # 2. 모델 파일이 서버(또는 폴더)에 존재하는지 확인
     if os.path.exists(model_path):
         try:
-            # 학습된 모델 메모리에 올리기
-            model = joblib.load(model_path)
+            # 두 개의 모델이 담긴 딕셔너리 불러오기
+            dual_models = joblib.load(model_path)
+            model_10min = dual_models['model_10min']
+            model_close = dual_models['model_close']
             
-            # 실시간 데이터(X_live)를 넣어서 상승 확률(또는 예측 점수) 추론
-            ai_predictions = model.predict(X_live)
-            
-            # 예측 결과를 데이터프레임에 파생 변수로 추가
-            filtered_df['우량주_매력도_점수'] = np.round(ai_predictions, 2)
+            # 실시간 데이터를 넣어 두 가지 예측 점수 동시 추출
+            filtered_df['10분_상승예측(%)'] = np.round(model_10min.predict(X_live), 2)
+            filtered_df['종가_상승예측(%)'] = np.round(model_close.predict(X_live), 2)
             
         except Exception as e:
-            st.error(f"⚠️ AI 모델 예측 중 에러 발생: {e}")
-            # 에러 발생 시 프로그램이 멈추지 않도록 기본 수식으로 대체
-            filtered_df['우량주_매력도_점수'] = ((filtered_df['등락률'] * 1.5) + (np.log1p(filtered_df['거래대금']) * 2.5)).round(1)
+            st.error(f"⚠️ AI 모델 예측 에러: {e}")
+            filtered_df['10분_상승예측(%)'] = 0.0
+            filtered_df['종가_상승예측(%)'] = 0.0
     else:
-        # 모델 파일이 아직 없을 때 돌아가는 기본(Fallback) 알고리즘
-        st.info("⚠️ 'stock_model.pkl' AI 모델 파일이 없어 기본 수식으로 점수를 계산합니다.")
-        filtered_df['우량주_매력도_점수'] = ((filtered_df['등락률'] * 1.5) + (np.log1p(filtered_df['거래대금']) * 2.5)).round(1)
+        st.info("⚠️ 'stock_dual_model.pkl' 파일이 없습니다. 기본 점수를 띄웁니다.")
+        filtered_df['10분_상승예측(%)'] = ((filtered_df['등락률'] * 0.5) + np.log1p(filtered_df['거래대금'])).round(2)
+        filtered_df['종가_상승예측(%)'] = 0.0
     # ==========================================================
 
     filtered_df['테마'] = filtered_df['종목명'].apply(get_theme_icon)
@@ -337,22 +333,21 @@ if not df_universe.empty:
 
     filtered_df['매매상태'] = filtered_df.apply(detect_signal, axis=1)
 
-    # AI 점수가 가장 높은 상위 30개 종목 추출
-    top_30 = filtered_df.sort_values(by='우량주_매력도_점수', ascending=False).head(30)
+    # 정렬 기준을 가장 중요한 '10분_상승예측(%)'로 변경!
+    top_30 = filtered_df.sort_values(by='10분_상승예측(%)', ascending=False).head(30)
 
     output_df = pd.DataFrame({
         '테마': top_30['테마'],
         '실시간 상태': top_30['매매상태'],
-        'AI 점수': top_30['우량주_매력도_점수'].apply(lambda x: f"{x} 점"), # 이름 변경
+        'AI 10분 단타예측': top_30['10분_상승예측(%)'].apply(lambda x: f"🚀 +{x}%"), # ✨ 메인 타겟
+        'AI 종가 홀딩예측': top_30['종가_상승예측(%)'].apply(lambda x: f"📈 +{x}%" if x > 0 else f"📉 {x}%"), # ✨ 보조 타겟
         '종목명': top_30['종목명'],
         '현재가': top_30['현재가'].apply(lambda x: f"{int(x):,} 원"),
         '상승률': top_30['등락률'].apply(lambda x: f"+{x:.2f} %"),
         '단기 목표가(+3%)': top_30['단기_목표가'].apply(lambda x: f"{x:,} 원"),
         '손절가(-2%)': top_30['손절가'].apply(lambda x: f"{x:,} 원"),
-        '상한가까지 여력': top_30['상한가_여력'].apply(lambda x: f"{x} %"),
         '거래대금(백만)': top_30['거래대금'].apply(lambda x: f"{int(x):,}"),
-        '종목코드': top_30['종목코드'],
-        '시장': top_30['시장']
+        '종목코드': top_30['종목코드']
     }).reset_index(drop=True)
 
     st.markdown("💡 **표에서 관심 있는 종목의 행을 클릭**하시면 하단에 정밀 분석용 1분봉 캔들차트가 생성됩니다.")
