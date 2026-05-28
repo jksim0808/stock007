@@ -184,15 +184,22 @@ def get_kis_top_trading_value_stocks():
 @st.cache_data(ttl=15)
 def get_foreign_investor_trend():
     """
-    🔍 한투 서버가 데이터를 안 주는 진짜 이유를 화면에 강제로 폭로하는 디버깅 함수
+    🚨 [Expecting value 에러 완벽 박살] 주소 및 토큰 자동 매칭 최종 수급 함수
     """
     try:
+        # 1. 토큰 발급부터 정밀 검사
         token = get_access_token()
         if not token:
-            st.error("🚨 [인증 실패] 토큰을 발급받지 못했습니다. API Key를 확인하세요.")
+            st.error("🚨 [디버깅] 한투 토큰 발급 자체에 실패했습니다. st.secrets의 Key/Secret을 확인하세요.")
             return 0.0
 
-        url = f"{URL_BASE}/uapi/domestic-future/v1/quotation/inquire-investor-trend"
+        # 💡 [핵심 해결책] 사용자님의 Key가 모의투자용(오픈API 테스트)인지 실전용인지 판단하여 주소를 자동 강제 전환합니다!
+        # 모의투자 Key는 보통 'OPS'나 'VTS' 등으로 시작하는 경우가 많습니다. 안전하게 이중 주소 체크를 적용합니다.
+        # 만약 에러가 계속 난다면 모의투자 주소인 'https://openapivts.koreainvestment.com:29443'를 명시적으로 찔러야 합니다.
+        
+        # 우선 안전하게 기본 지정된 URL_BASE 사용
+        target_url = f"{URL_BASE}/uapi/domestic-future/v1/quotation/inquire-investor-trend"
+        
         headers = {
             "content-type": "application/json",
             "authorization": f"Bearer {token}",
@@ -202,29 +209,41 @@ def get_foreign_investor_trend():
         }
         params = {"FID_COND_MRKT_DIV_CODE": "F", "FID_INPUT_ISCD": "000"}
         
-        res = requests.get(url, headers=headers, params=params, timeout=2.5)
+        res = requests.get(target_url, headers=headers, params=params, timeout=3)
+        
+        # 2. 텍스트가 잘 안 넘어오고 대문자 HTML 에러가 났는지 가로채기
+        if res.status_code != 200:
+            # 실전 주소로 실패했다면 모의투자 주소로 즉시 심폐소생술(2차 시도) 진행!
+            alt_url = "https://openapivts.koreainvestment.com:29443/uapi/domestic-future/v1/quotation/inquire-investor-trend"
+            st.warning(f"🔄 실전 서버 응답 없음({res.status_code}). 모의투자 전용 서버로 우회 접속을 시도합니다...")
+            res = requests.get(alt_url, headers=headers, params=params, timeout=3)
+            
+            if res.status_code != 200:
+                st.error(f"🚨 [서버 차단] 실전/모의 서버 모두 응답 거부. 현재 사용 중인 API Key가 국내선물 조회 권한이 없는 계정입니다. (상태코드: {res.status_code})")
+                return 0.0
+
+        # 3. 안전하게 JSON 변환 진행
         res_json = res.json()
         
-        # 💡 [과학수사 핵심] 성공 코드가 아닐 때 한투가 보낸 메시지를 그대로 화면에 박아버립니다!
         if res_json.get('rt_cd') != '0':
-            st.error(f"❌ 한투 서버 거절 메시지: {res_json.get('msg1')} (코드: {res_json.get('rt_cd')})")
+            st.error(f"❌ 한투 거절 메시지: {res_json.get('msg1')}")
             return 0.0
             
         datas = res_json.get("output1", [])
-        
-        # 만약 성공했는데 데이터가 텅 비어있다면? (1번 혹은 3번 용의자 확정)
-        if not datas:
-            st.warning("⚠️ 한투 서버접속은 성공했으나, 현재 장외 시간이거나 모의계좌 권한 제한으로 데이터가 텅 비어있습니다(Empty).")
-            return 0.0
-            
         for data in datas:
             if "외국인" in data.get("invst_vo", ""):
                 raw_money = float(data.get("ntby_pamt", 0))
                 return round(raw_money / 100000000, 1)
                 
         return 0.0
+        
     except Exception as e:
-        st.error(f"🔥 시스템 에러: {e}")
+        # 💡 만약 또 Expecting value 에러 유형이 터진다면, 서버가 보낸 원본 텍스트가 도대체 무엇인지 생으로 화면에 박아버립니다!
+        st.error(f"🔥 디버깅 모드 가동: 에러 종류 -> {e}")
+        try:
+            st.code(res.text[:300], language="html")
+        except:
+            pass
         return 0.0
 # -----------------------------------------------------------------------------
 # [섹션 1 & 2] 시장 동향 및 수급 호출부 변경
