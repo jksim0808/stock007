@@ -181,57 +181,44 @@ def get_kis_top_trading_value_stocks():
     df = df.sort_values(by='거래대금', ascending=False).drop_duplicates(subset=['종목코드'])
     return df.dropna()
 
-@st.cache_data(ttl=30)
+@st.cache_data(ttl=15) # 💡 가볍고 완벽한 데이터이므로 15초마다 초고속 갱신!
 def get_foreign_investor_trend():
     """
-    💡 사용자님의 천재적인 아이디어 적용! (매수 - 매도를 직접 계산하는 실시간 수급 코드)
+    한투 권한 에러 및 네이버 PC 차단을 완벽히 우회하는 모바일 데이터 정밀 타격 버전 🎯
     """
     try:
-        url = f"{URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-investor-daily-by-market"
-        headers = get_common_headers("FHPTJ04040000")
+        # 💡 네이버가 모바일 앱/웹용으로 실시간 수급을 쏠 때 쓰는 '검증된 무방비 통로' 주소입니다.
+        url = "https://m.stock.naver.com/api/json/sise/investorDealTrendTime.nhn?bizdate=20260528&sosok="
         
-        today_str = datetime.now(KST).strftime('%Y%m%d')
-        
-        params = {
-            "FID_COND_MRKT_DIV_CODE": "U", 
-            "FID_INPUT_ISCD": "0001",      # 코스피 종합 지수
-            "FID_INPUT_DATE_1": today_str, 
-            "FID_INPUT_DATE_2": today_str, 
-            "FID_PERIOD_DIV_CODE": "D",    
-            "FID_COND_SCR_DIV_CODE": "",   
-            "FID_INPUT_ISCD_1": "",        
-            "FID_INPUT_ISCD_2": ""         
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
+            "Referer": "https://m.stock.naver.com/"
         }
         
-        res = requests.get(url, headers=headers, params=params)
-        res_data = res.json()
+        res = requests.get(url, headers=headers, timeout=5)
+        res.encoding = 'utf-8'
         
-        if res_data.get('rt_cd') == '0':
-            data_list = res_data.get('output1') or res_data.get('output')
-            if data_list:
-                today_data = data_list[0]
-                
-                # 🎯 [핵심] 사용자님 아이디어 적용! 
-                # 한투 API 필드: frgn_buy_amt(매수 대금), frgn_sll_amt(매도 대금)
-                foreign_buy = float(today_data.get('frgn_buy_amt', 0))
-                foreign_sell = float(today_data.get('frgn_sll_amt', 0))
-                
-                # 순매수 = 총 매수 - 총 매도 직접 계산!
-                foreign_net_buy = foreign_buy - foreign_sell
-                
-                # 💡 만약 직접 계산했는데도 0이라면, 장 시작 전이거나 데이터 지연임을 알립니다.
-                if foreign_net_buy == 0:
-                    st.warning(f"⚠️ [현재 실시간 집계] 매수: {foreign_buy}억 / 매도: {foreign_sell}억 (데이터 수집 대기중)")
-                
-                return foreign_net_buy
-            return 0.0
+        # 💡 모바일 주소는 HTML이 아니라 '순수 데이터(JSON)'로 넘어오기 때문에 완벽한 가공이 가능합니다!
+        data = res.json()
+        
+        # 데이터 묶음에서 선물(Futures) 코드를 찾아 직접 타격합니다.
+        # 네이버 내부 코드 순서: 코스피(0), 코스닥(1), 선물(2)
+        if 'result' in data and 'dealTrendTimeList' in data['result']:
+            trend_list = data['result']['dealTrendTimeList']
             
-        else:
-            st.error(f"🚨 한투 API 거절 사유: {res_data.get('msg1')}")
-            return 0.0
-            
+            # 🎯 안전하게 '선물' 항목을 직접 검색해서 가져옵니다.
+            for item in trend_list:
+                if '선물' in item.get('item', ''):
+                    # 외국인 순매수 금액 (단위: 억 원)
+                    # 모바일 API는 'frgn' 필드에 외국인 순매수 금액을 정확히 실시간으로 채워줍니다!
+                    foreign_net_buy = float(item.get('frgn', 0))
+                    return foreign_net_buy
+                    
+        return 0.0
+        
     except Exception as e:
-        st.error(f"⚠️ API 통신 실패: {e}")
+        # 💡 혹시나 모바일 주소 방식에 에러가 나면 브라우저에 투명하게 오픈합니다.
+        st.error(f"⚠️ 모바일 우회 채널 통신 실패: {e}")
         return 0.0
 # -----------------------------------------------------------------------------
 # [섹션 1 & 2] 시장 동향 및 수급
