@@ -7,6 +7,7 @@ import json
 from datetime import datetime, timedelta, timezone
 import FinanceDataReader as fdr 
 import io
+from bs4 import BeautifulSoup
 
 # -----------------------------------------------------------------------------
 # [설정] 한국투자증권 API KEY (Streamlit Secrets 활용)
@@ -182,39 +183,32 @@ def get_kis_top_trading_value_stocks():
 def get_foreign_investor_trend():
     """
     네이버 금융 '투자자별 매매동향' 페이지에서 
-    실시간 외국인 선물 순매수 금액을 크롤링하여 가져옵니다.
+    실시간 외국인 선물 순매수 금액을 BeautifulSoup으로 정확히 타겟팅하여 추출합니다.
     """
     try:
-        # 네이버 금융 투자자별 매매동향 페이지
         url = "https://finance.naver.com/sise/sise_trans_style.naver"
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
         res = requests.get(url, headers=headers)
-        res.encoding = 'euc-kr'
-
-        # HTML 표 읽기 (환율 때 사용했던 io.StringIO 활용)
-        dfs = pd.read_html(io.StringIO(res.text))
-
-        # 보통 첫 번째 표(dfs[0])가 [투자자구분, 거래소, 코스닥, 선물, 콜옵션, 풋옵션] 데이터를 담고 있습니다.
-        df = dfs[0]
-
-        # 1. '투자자구분' 열(보통 첫 번째 열)에서 '외국인'이 있는 행을 찾음
-        foreign_row = df[df.iloc[:, 0].str.contains("외국인", na=False)]
-
-        if not foreign_row.empty:
-            # 2. 컬럼명에 '선물'이 포함된 열을 찾아 해당 값을 추출
-            target_col = [col for col in df.columns if '선물' in str(col)][0]
-            value_str = str(foreign_row[target_col].values[0])
-
-            # 3. 콤마(,) 등 불필요한 문자 제거 후 숫자로 변환 (단위: 억원)
-            net_buy = float(value_str.replace(',', '').replace('억', '').strip())
-            return net_buy
-        else:
-            return 0  # 데이터를 못 찾을 경우 0 반환
-
+        
+        # 네이버 금융의 한글 인코딩(euc-kr)을 안전하게 디코딩
+        soup = BeautifulSoup(res.content.decode('euc-kr', 'replace'), 'html.parser')
+        
+        # 페이지 내의 모든 표의 행(tr)을 탐색
+        rows = soup.find_all('tr')
+        
+        for row in rows:
+            cols = row.find_all('td')
+            # 첫 번째 칸(cols[0])에 '외국인'이라는 단어가 포함되어 있다면
+            if cols and '외국인' in cols[0].text:
+                # [투자자, 거래소, 코스닥, 선물, 콜, 풋] 순서이므로 선물은 4번째(인덱스 3)
+                futures_str = cols[3].text.replace(',', '').strip()
+                return float(futures_str)
+                
+        return 0.0 # 데이터를 못 찾았을 경우
+        
     except Exception as e:
-        # 에러 발생 시 터미널에 에러 로그를 띄우고 0 반환
-        print(f"외국인 선물 수급 크롤링 에러: {e}")
-        return 0
+        st.error(f"외국인 선물 데이터 크롤링 에러: {e}")
+        return 0.0
 # -----------------------------------------------------------------------------
 # [섹션 1 & 2] 시장 동향 및 수급
 # -----------------------------------------------------------------------------
