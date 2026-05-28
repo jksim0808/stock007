@@ -184,7 +184,7 @@ def get_kis_top_trading_value_stocks():
 @st.cache_data(ttl=60)
 def get_foreign_investor_trend():
     """
-    네이버 금융 '투자자별 매매동향' 외국인 선물 순매수 크롤링 (버그 수정본 💡)
+    네이버 금융 '투자자별 매매동향' 외국인 선물 순매수 크롤링 (강력한 Pandas 버전 🚀)
     """
     try:
         url = "https://finance.naver.com/sise/sise_trans_style.naver"
@@ -192,30 +192,36 @@ def get_foreign_investor_trend():
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }
         res = requests.get(url, headers=headers)
-        soup = BeautifulSoup(res.content.decode('euc-kr', 'replace'), 'html.parser')
         
-        rows = soup.find_all('tr')
+        # 네이버 금융의 한글 인코딩에 맞춤
+        res.encoding = 'euc-kr' 
         
-        for row in rows:
-            # th(제목 셀)와 td(데이터 셀)를 모두 가져옵니다.
-            cols = row.find_all(['th', 'td']) 
+        # 💡 HTML의 복잡한 태그를 무시하고 표(Table) 데이터만 완벽하게 추출!
+        dfs = pd.read_html(io.StringIO(res.text))
+        
+        # 페이지 내의 모든 표를 뒤져서 '선물' 데이터를 찾습니다.
+        for df in dfs:
+            df = df.dropna(how='all') # 완전히 비어있는 줄 삭제
             
-            # 표의 칸이 4개 이상인 유의미한 줄인지 확인
-            if len(cols) >= 4:
-                row_name = cols[0].text.replace(' ', '').replace('\n', '').replace('\t', '')
+            # 표의 한 줄(row)씩 읽어들임
+            for _, row in df.iterrows():
+                # 첫 번째 칸의 글자를 가져옴 (예: '거래소', '코스닥', '선물')
+                first_col_text = str(row.iloc[0]).replace(' ', '').strip()
                 
-                # 💡 핵심 수정: 가로줄(행)의 이름이 '선물'인 곳을 찾습니다. (이전엔 '외국인'으로 잘못 찾음)
-                if '선물' in row_name:
+                if '선물' in first_col_text:
                     # 💡 네이버 표 구조: [0]구분, [1]개인, [2]외국인, [3]기관계
-                    # 즉, 외국인 데이터는 2번째 인덱스(cols[2])에 있습니다!
-                    val_str = cols[2].text.replace(',', '').strip()
-                    if val_str:
+                    # 외국인 데이터는 무조건 3번째 칸(인덱스 2)에 있습니다!
+                    val_str = str(row.iloc[2]).replace(',', '').strip()
+                    
+                    try:
                         return float(val_str)
+                    except ValueError:
+                        return 0.0 # 숫자로 바꿀 수 없는 에러 값이면 0.0
                         
-        return 0.0 # 데이터를 끝내 못 찾으면 0.0 반환
+        return 0.0 
         
     except Exception as e:
-        print(f"외국인 선물 데이터 크롤링 에러: {e}")
+        st.error(f"⚠️ 외국인 수급 데이터 크롤링 에러: {e}")
         return 0.0
 # -----------------------------------------------------------------------------
 # [섹션 1 & 2] 시장 동향 및 수급
