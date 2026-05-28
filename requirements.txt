@@ -6,3 +6,4 @@ plotly
 requests
 finance-datareader
 streamlit-autorefresh
+beautifulsoup4
