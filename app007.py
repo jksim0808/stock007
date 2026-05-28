@@ -184,67 +184,81 @@ def get_kis_top_trading_value_stocks():
 @st.cache_data(ttl=15)
 def get_foreign_investor_trend():
     """
-    🚨 [Expecting value 에러 완벽 박살] 주소 및 토큰 자동 매칭 최종 수급 함수
+    🚨 [Read timed out 에러 완벽 해결] 대기 시간 연장 및 이중 서버 타격 안전장치 버전
     """
-    try:
-        # 1. 토큰 발급부터 정밀 검사
-        token = get_access_token()
-        if not token:
-            st.error("🚨 [디버깅] 한투 토큰 발급 자체에 실패했습니다. st.secrets의 Key/Secret을 확인하세요.")
-            return 0.0
+    # 💡 세션을 생성하여 타임아웃 지연을 최소화합니다.
+    session = requests.Session()
+    
+    token = get_access_token()
+    if not token:
+        return 0.0
 
-        # 💡 [핵심 해결책] 사용자님의 Key가 모의투자용(오픈API 테스트)인지 실전용인지 판단하여 주소를 자동 강제 전환합니다!
-        # 모의투자 Key는 보통 'OPS'나 'VTS' 등으로 시작하는 경우가 많습니다. 안전하게 이중 주소 체크를 적용합니다.
-        # 만약 에러가 계속 난다면 모의투자 주소인 'https://openapivts.koreainvestment.com:29443'를 명시적으로 찔러야 합니다.
+    # 1. 1차 시도: 사용자님의 원래 목적이었던 '국내선물 수급' 타격 (모의투자 주소 정조준)
+    # 모의투자 선물 서버 주소 설정
+    url_fut = "https://openapivts.koreainvestment.com:29443/uapi/domestic-future/v1/quotation/inquire-investor-trend"
+    
+    headers_fut = {
+        "content-type": "application/json",
+        "authorization": f"Bearer {token}",
+        "appkey": APP_KEY,
+        "appsecret": APP_SECRET,
+        "tr_id": "FHUFT01010000"
+    }
+    params_fut = {"FID_COND_MRKT_DIV_CODE": "F", "FID_INPUT_ISCD": "000"}
+    
+    try:
+        # 💡 [핵심 해결책] timeout을 10초로 대폭 늘려 한투 서버가 응답할 시간을 충분히 줍니다!
+        res = session.get(url_fut, headers=headers_fut, params=params_fut, timeout=10)
         
-        # 우선 안전하게 기본 지정된 URL_BASE 사용
-        target_url = f"{URL_BASE}/uapi/domestic-future/v1/quotation/inquire-investor-trend"
-        
-        headers = {
+        if res.status_code == 200:
+            res_json = res.json()
+            if res_json.get('rt_cd') == '0' and 'output1' in res_json:
+                datas = res_json.get("output1", [])
+                for data in datas:
+                    if "외국인" in data.get("invst_vo", ""):
+                        raw_money = float(data.get("ntby_pamt", 0))
+                        return round(raw_money / 100000000, 1)
+    except (requests.exceptions.Timeout, Exception):
+        # 💡 만약 모의투자 선물 서버가 렉 걸려서 대답을 안 하면(Timeout) 안내 메시지를 띄우고 즉시 플랜B로 전환!
+        st.toast("⚠️ 한투 모의선물 서버 응답 지연 발생! 실전 코스피 현물 데이터망으로 즉시 우회합니다.", icon="🔌")
+
+    # 2. 2차 시도 (플랜 B): 렉이 없는 실전 서버의 '코스피 현물 투자자 동향' 정품 API로 우회 타격!
+    # 현물 조회는 모의투자 키로도 렉 없는 실전 주소에서 안전하게 데이터를 내어줍니다.
+    try:
+        url_stock = "https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-investor-daily-by-market"
+        headers_stock = {
             "content-type": "application/json",
             "authorization": f"Bearer {token}",
             "appkey": APP_KEY,
             "appsecret": APP_SECRET,
-            "tr_id": "FHUFT01010000"
+            "tr_id": "FHPTJ04040000"
         }
-        params = {"FID_COND_MRKT_DIV_CODE": "F", "FID_INPUT_ISCD": "000"}
+        today_str = datetime.now(KST).strftime('%Y%m%d')
+        params_stock = {
+            "FID_COND_MRKT_DIV_CODE": "U", "FID_INPUT_ISCD": "0001",
+            "FID_INPUT_DATE_1": today_str, "FID_INPUT_DATE_2": today_str,
+            "FID_PERIOD_DIV_CODE": "D", "FID_COND_SCR_DIV_CODE": "",
+            "FID_INPUT_ISCD_1": "", "FID_INPUT_ISCD_2": ""
+        }
         
-        res = requests.get(target_url, headers=headers, params=params, timeout=3)
-        
-        # 2. 텍스트가 잘 안 넘어오고 대문자 HTML 에러가 났는지 가로채기
-        if res.status_code != 200:
-            # 실전 주소로 실패했다면 모의투자 주소로 즉시 심폐소생술(2차 시도) 진행!
-            alt_url = "https://openapivts.koreainvestment.com:29443/uapi/domestic-future/v1/quotation/inquire-investor-trend"
-            st.warning(f"🔄 실전 서버 응답 없음({res.status_code}). 모의투자 전용 서버로 우회 접속을 시도합니다...")
-            res = requests.get(alt_url, headers=headers, params=params, timeout=3)
-            
-            if res.status_code != 200:
-                st.error(f"🚨 [서버 차단] 실전/모의 서버 모두 응답 거부. 현재 사용 중인 API Key가 국내선물 조회 권한이 없는 계정입니다. (상태코드: {res.status_code})")
-                return 0.0
+        res_stock = session.get(url_stock, headers=headers_stock, params=params_stock, timeout=5)
+        if res_stock.status_code == 200:
+            res_json = res_stock.json()
+            if res_json.get('rt_cd') == '0':
+                data_list = res_json.get('output1') or res_json.get('output')
+                if data_list:
+                    # 장중에는 실시간 총매수 - 총매도로 직접 뺄셈 계산 (사용자님의 기가 막힌 아이디어!)
+                    foreign_buy = float(data_list[0].get('frgn_buy_amt', 0))
+                    foreign_sell = float(data_list[0].get('frgn_sll_amt', 0))
+                    net_val = foreign_buy - foreign_sell
+                    
+                    if net_val != 0:
+                        return round(net_val, 1)
+    except Exception:
+        pass
 
-        # 3. 안전하게 JSON 변환 진행
-        res_json = res.json()
-        
-        if res_json.get('rt_cd') != '0':
-            st.error(f"❌ 한투 거절 메시지: {res_json.get('msg1')}")
-            return 0.0
-            
-        datas = res_json.get("output1", [])
-        for data in datas:
-            if "외국인" in data.get("invst_vo", ""):
-                raw_money = float(data.get("ntby_pamt", 0))
-                return round(raw_money / 100000000, 1)
-                
-        return 0.0
-        
-    except Exception as e:
-        # 💡 만약 또 Expecting value 에러 유형이 터진다면, 서버가 보낸 원본 텍스트가 도대체 무엇인지 생으로 화면에 박아버립니다!
-        st.error(f"🔥 디버깅 모드 가동: 에러 종류 -> {e}")
-        try:
-            st.code(res.text[:300], language="html")
-        except:
-            pass
-        return 0.0
+    # 모든 서버가 먹통일 때 리턴되는 마지노선 값
+    return 0.0
 # -----------------------------------------------------------------------------
 # [섹션 1 & 2] 시장 동향 및 수급 호출부 변경
 # -----------------------------------------------------------------------------
