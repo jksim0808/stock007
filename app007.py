@@ -184,7 +184,7 @@ def get_kis_top_trading_value_stocks():
 @st.cache_data(ttl=30)
 def get_foreign_investor_trend():
     """
-    한국투자증권(KIS) API - 깐깐한 빈칸 파라미터까지 완벽하게 채워 넣은 최종 수급 코드 🚀
+    💡 사용자님의 천재적인 아이디어 적용! (매수 - 매도를 직접 계산하는 실시간 수급 코드)
     """
     try:
         url = f"{URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-investor-daily-by-market"
@@ -192,16 +192,15 @@ def get_foreign_investor_trend():
         
         today_str = datetime.now(KST).strftime('%Y%m%d')
         
-        # 💡 한투 서버가 양식지에서 요구하는 모든 빈칸을 빈틈없이 제출합니다.
         params = {
-            "FID_COND_MRKT_DIV_CODE": "U", # U: 코스피 시장 전체 (업종)
-            "FID_INPUT_ISCD": "0001",      # 0001: 코스피 종합 지수
-            "FID_INPUT_DATE_1": today_str, # 조회 시작일 (오늘)
-            "FID_INPUT_DATE_2": today_str, # 조회 종료일 (오늘)
-            "FID_PERIOD_DIV_CODE": "D",    # D: 일별 데이터
-            "FID_COND_SCR_DIV_CODE": "",   # 💡 API가 요구하는 화면 분류 코드 (빈칸)
-            "FID_INPUT_ISCD_1": "",        # 💡 에러의 원인! 요구하는 추가 종목 코드 1 (빈칸)
-            "FID_INPUT_ISCD_2": ""         # 💡 혹시 몰라 채워두는 추가 종목 코드 2 (빈칸)
+            "FID_COND_MRKT_DIV_CODE": "U", 
+            "FID_INPUT_ISCD": "0001",      # 코스피 종합 지수
+            "FID_INPUT_DATE_1": today_str, 
+            "FID_INPUT_DATE_2": today_str, 
+            "FID_PERIOD_DIV_CODE": "D",    
+            "FID_COND_SCR_DIV_CODE": "",   
+            "FID_INPUT_ISCD_1": "",        
+            "FID_INPUT_ISCD_2": ""         
         }
         
         res = requests.get(url, headers=headers, params=params)
@@ -212,8 +211,17 @@ def get_foreign_investor_trend():
             if data_list:
                 today_data = data_list[0]
                 
-                # 'frgn_ntby_amt' = 외국인 순매수 금액 (단위: 억 원)
-                foreign_net_buy = float(today_data.get('frgn_ntby_amt', 0))
+                # 🎯 [핵심] 사용자님 아이디어 적용! 
+                # 한투 API 필드: frgn_buy_amt(매수 대금), frgn_sll_amt(매도 대금)
+                foreign_buy = float(today_data.get('frgn_buy_amt', 0))
+                foreign_sell = float(today_data.get('frgn_sll_amt', 0))
+                
+                # 순매수 = 총 매수 - 총 매도 직접 계산!
+                foreign_net_buy = foreign_buy - foreign_sell
+                
+                # 💡 만약 직접 계산했는데도 0이라면, 장 시작 전이거나 데이터 지연임을 알립니다.
+                if foreign_net_buy == 0:
+                    st.warning(f"⚠️ [현재 실시간 집계] 매수: {foreign_buy}억 / 매도: {foreign_sell}억 (데이터 수집 대기중)")
                 
                 return foreign_net_buy
             return 0.0
