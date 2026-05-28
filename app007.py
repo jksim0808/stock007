@@ -181,69 +181,42 @@ def get_kis_top_trading_value_stocks():
     df = df.sort_values(by='거래대금', ascending=False).drop_duplicates(subset=['종목코드'])
     return df.dropna()
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=30) # 💡 정품 데이터이므로 30초마다 쾌적하게 갱신!
 def get_foreign_investor_trend():
     """
-    네이버 금융 봇 차단 시스템을 완벽하게 우회하는 철통 위장 버전 🛡️
+    네이버 크롤링 폐기! 한국투자증권(KIS) 정품 API로 외국인 선물 순매수 실시간 수집 🚀
     """
     try:
-        url = "https://finance.naver.com/sise/sise_trans_style.naver"
+        # 한국투자증권 실시간 투자자별 매매동향 (주간/일별) API 주소
+        url = f"{URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-investor"
         
-        # 💡 네이버 보안 시스템을 속이기 위한 정밀 위장 헤더 세팅
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-            "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
-            "Accept-Encoding": "gzip, deflate, br",
-            "Referer": "https://finance.naver.com/",
-            "Connection": "keep-alive"
+        # 한국투자증권 전용 필수 헤더 (tr_id: FHKST01010300 = 투자자별 매매동향)
+        headers = get_common_headers("FHKST01010300")
+        
+        # 💡 코스피200 선물 시장의 실시간 수급을 보기 위해 대표 코드 '0001' 또는 '10100' 지정
+        # 여기서는 가장 대중적인 코스피 시장 전체의 외국인 수급을 타격합니다.
+        params = {
+            "FID_COND_MRKT_DIV_CODE": "U", # 시장 구분 (U: 지수/투자자)
+            "FID_INPUT_ISCD": "0001"        # 코스피 지수 코드
         }
         
-        # 💡 세션을 생성하여 진짜 브라우저처럼 쿠키를 유지하며 접속합니다.
-        session = requests.Session()
-        res = session.get(url, headers=headers, timeout=10)
-        res.encoding = 'euc-kr' 
+        res = requests.get(url, headers=headers, params=params)
+        res_data = res.json()
         
-        soup = BeautifulSoup(res.text, 'html.parser')
-        
-        # 표 탐색 시작
-        table = soup.find('table', class_='type_1')
-        
-        # 💡 만약 또 차단당했다면, 네이버가 보낸 가짜 화면의 정체를 폭로합니다!
-        if not table:
-            st.error("🚨 여전히 네이버가 봇으로 의심하여 차단 중입니다. 우회 경로(Ajax)로 즉시 전환합니다.")
+        if res_data.get('rt_cd') == '0' and 'output1' in res_data:
+            # output1의 가장 첫 번째 행이 '오늘 현재 실시간 누적 수급' 데이터입니다.
+            current_data = res_data['output1'][0]
             
-            # [플랜 B] 웹페이지 껍데기 말고, 데이터만 순수하게 넘어가는 진짜 실시간 통로 주소로 강제 우회
-            ajax_url = "https://finance.naver.com/sise/investorDealTrendTime.naver?bizdate=20260528&sosok="
-            res_ajax = session.get(ajax_url, headers=headers, timeout=10)
-            res_ajax.encoding = 'euc-kr'
-            soup_ajax = BeautifulSoup(res_ajax.text, 'html.parser')
+            # 🎯 외국인 순매수 대금 (한투 단위: 억 원)
+            # 'frgn_ntby_amt' = 외국인 순매수 금액
+            foreign_value = float(current_data['frgn_ntby_amt'])
             
-            for tr in soup_ajax.find_all('tr'):
-                cols = tr.find_all(['td', 'th'])
-                if len(cols) >= 4 and '선물' in cols[0].text:
-                    val_str = cols[2].text.replace(',', '').replace('+', '').strip()
-                    return float(val_str)
-            return 0.0
+            return foreign_value
             
-        # [플랜 A] 정식 표를 정상적으로 가져왔을 때의 절대 좌표 추출 로직
-        real_rows = []
-        for tr in table.find_all('tr'):
-            cols = tr.find_all('td')
-            if len(cols) >= 4:
-                real_rows.append(cols)
-                
-        if len(real_rows) >= 3:
-            foreign_val_str = real_rows[2][2].text.replace(',', '').replace('+', '').strip()
-            try:
-                return float(foreign_val_str)
-            except ValueError:
-                return 0.0
-                
-        return 0.0 
+        return 0.0
         
     except Exception as e:
-        st.error(f"⚠️ 크롤링 에러: {e}")
+        st.error(f"⚠️ 한투 수급 API 호출 실패: {e}")
         return 0.0
 # -----------------------------------------------------------------------------
 # [섹션 1 & 2] 시장 동향 및 수급
