@@ -181,46 +181,51 @@ def get_kis_top_trading_value_stocks():
     df = df.sort_values(by='거래대금', ascending=False).drop_duplicates(subset=['종목코드'])
     return df.dropna()
 
-@st.cache_data(ttl=30) 
+@st.cache_data(ttl=30)
 def get_foreign_investor_trend():
     """
-    네이버/한투 모두 폐기! 가장 안정적인 '다음(Daum) 금융' 실시간 수급 API 정밀 타격 🎯
+    [진짜 원인 해결] 미래 날짜 오류 수정! 네이버 실시간 수급 데이터 정밀 타격 🚀
     """
     try:
-        # 💡 다음(Daum) 금융의 코스피 투자자별 매매동향 API 주소
-        url = "https://finance.daum.net/api/investor/days?page=1&perPage=1&market=KOSPI&pagination=true"
+        # 💡 [핵심] 파이썬이 스스로 오늘 날짜를 'YYYYMMDD' 형식으로 계산합니다.
+        today_str = datetime.now(KST).strftime('%Y%m%d')
         
-        # 💡 다음 금융 서버를 통과하기 위한 마법의 출입증 (Referer)
+        # 💡 계산된 오늘 날짜(today_str)를 주소에 자동으로 주입합니다.
+        url = f"https://finance.naver.com/sise/investorDealTrendTime.naver?bizdate={today_str}&sosok="
+        
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Referer": "https://finance.daum.net/domestic/investors", # 핵심! 이 주소에서 온 것처럼 속입니다.
-            "Accept": "application/json"
+            "Referer": "https://finance.naver.com/sise/sise_trans_style.naver"
         }
         
         res = requests.get(url, headers=headers, timeout=5)
+        res.encoding = 'euc-kr'
         
-        # 접속 성공 (200 OK) 확인
-        if res.status_code == 200:
-            data = res.json()
-            
-            # 데이터 꾸러미가 정상적으로 있다면
-            if 'data' in data and len(data['data']) > 0:
-                # 첫 번째 줄이 바로 '오늘 실시간 누적 데이터'입니다.
-                today_data = data['data'][0]
+        soup = BeautifulSoup(res.text, 'html.parser')
+        
+        # 실시간 데이터 표를 뒤져서 타겟을 찾습니다.
+        for tr in soup.find_all('tr'):
+            cols = tr.find_all(['td', 'th'])
+            if len(cols) >= 4:
+                cell_text = cols[0].text.replace(' ', '').strip()
                 
-                # 🎯 'foreignStraightAmt' = 외국인 순매수 금액 (단위: 원)
-                # 보기 좋게 억 단위로 나누어 줍니다.
-                foreign_net_buy_won = today_data.get('foreignStraightAmt', 0)
-                foreign_net_buy_uk = foreign_net_buy_won / 100000000 
-                
-                return round(foreign_net_buy_uk, 1)
-                
-        # 만약 다음 서버가 응답하지 않는다면
-        st.warning(f"⚠️ 다음 금융 서버 지연 (상태코드: {res.status_code})")
-        return 0.0
+                # 🎯 '선물' 데이터 우선 타격! (만약 없으면 코스피 현물 '거래소' 타격)
+                if '선물' in cell_text or '거래소' in cell_text:
+                    # 외국인 순매수 금액 (단위: 억 원)
+                    foreign_val_str = cols[2].text.replace(',', '').replace('+', '').strip()
+                    
+                    try:
+                        val = float(foreign_val_str)
+                        if val != 0.0:
+                            return val
+                    except ValueError:
+                        continue
+                        
+        # 장 시작 전이거나 주말일 경우
+        return 0.0 
         
     except Exception as e:
-        st.error(f"⚠️ 수급 통신 실패: {e}")
+        st.error(f"⚠️ 네이버 통신 실패: {e}")
         return 0.0
 # -----------------------------------------------------------------------------
 # [섹션 1 & 2] 시장 동향 및 수급
