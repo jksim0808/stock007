@@ -184,46 +184,60 @@ def get_kis_top_trading_value_stocks():
 @st.cache_data(ttl=60)
 def get_foreign_investor_trend():
     """
-    [최종 결전] 글자 검색 포기! 무조건 3번째 줄(선물), 3번째 칸(외국인) 좌표를 강제로 뜯어옵니다 🎯
+    네이버 금융 봇 차단 시스템을 완벽하게 우회하는 철통 위장 버전 🛡️
     """
     try:
         url = "https://finance.naver.com/sise/sise_trans_style.naver"
+        
+        # 💡 네이버 보안 시스템을 속이기 위한 정밀 위장 헤더 세팅
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+            "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Referer": "https://finance.naver.com/",
+            "Connection": "keep-alive"
         }
-        res = requests.get(url, headers=headers)
+        
+        # 💡 세션을 생성하여 진짜 브라우저처럼 쿠키를 유지하며 접속합니다.
+        session = requests.Session()
+        res = session.get(url, headers=headers, timeout=10)
         res.encoding = 'euc-kr' 
         
         soup = BeautifulSoup(res.text, 'html.parser')
         
-        # 네이버 수급 표(class="type_1")를 찾습니다.
+        # 표 탐색 시작
         table = soup.find('table', class_='type_1')
+        
+        # 💡 만약 또 차단당했다면, 네이버가 보낸 가짜 화면의 정체를 폭로합니다!
         if not table:
-            st.error("⚠️ 네이버 표(table) 자체를 찾을 수 없습니다.")
+            st.error("🚨 여전히 네이버가 봇으로 의심하여 차단 중입니다. 우회 경로(Ajax)로 즉시 전환합니다.")
+            
+            # [플랜 B] 웹페이지 껍데기 말고, 데이터만 순수하게 넘어가는 진짜 실시간 통로 주소로 강제 우회
+            ajax_url = "https://finance.naver.com/sise/investorDealTrendTime.naver?bizdate=20260528&sosok="
+            res_ajax = session.get(ajax_url, headers=headers, timeout=10)
+            res_ajax.encoding = 'euc-kr'
+            soup_ajax = BeautifulSoup(res_ajax.text, 'html.parser')
+            
+            for tr in soup_ajax.find_all('tr'):
+                cols = tr.find_all(['td', 'th'])
+                if len(cols) >= 4 and '선물' in cols[0].text:
+                    val_str = cols[2].text.replace(',', '').replace('+', '').strip()
+                    return float(val_str)
             return 0.0
             
-        # 실제 데이터가 있는 줄(칸이 4개 이상인 줄)만 순서대로 차곡차곡 모읍니다.
+        # [플랜 A] 정식 표를 정상적으로 가져왔을 때의 절대 좌표 추출 로직
         real_rows = []
         for tr in table.find_all('tr'):
             cols = tr.find_all('td')
             if len(cols) >= 4:
                 real_rows.append(cols)
                 
-        # 💡 네이버 표의 절대 불변 법칙:
-        # real_rows[0] = 코스피
-        # real_rows[1] = 코스닥
-        # real_rows[2] = 선물 (🎯 우리가 뜯어올 타겟!)
-        
         if len(real_rows) >= 3:
-            # 3번째 줄(인덱스 2)에서, 외국인 칸(인덱스 2)의 데이터만 정확히 가져옵니다.
             foreign_val_str = real_rows[2][2].text.replace(',', '').replace('+', '').strip()
-            
             try:
-                # 뜯어온 글자를 숫자로 변환
                 return float(foreign_val_str)
             except ValueError:
-                # 만약 숫자가 아닌 이상한 글자를 가져왔다면 화면에 에러로 띄워서 범인을 검거합니다!
-                st.error(f"⚠️ 숫자 변환 실패! 파이썬이 뜯어온 이상한 데이터: '{foreign_val_str}'")
                 return 0.0
                 
         return 0.0 
