@@ -182,32 +182,36 @@ def get_kis_top_trading_value_stocks():
 @st.cache_data(ttl=60)
 def get_foreign_investor_trend():
     """
-    네이버 금융 '투자자별 매매동향' 페이지에서 
-    실시간 외국인 선물 순매수 금액을 BeautifulSoup으로 정확히 타겟팅하여 추출합니다.
+    네이버 금융 '투자자별 매매동향' 외국인 선물 순매수 크롤링 (강화 버전)
     """
     try:
         url = "https://finance.naver.com/sise/sise_trans_style.naver"
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+        # 봇 차단을 막기 위해 더 디테일한 User-Agent 사용
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
         res = requests.get(url, headers=headers)
-        
-        # 네이버 금융의 한글 인코딩(euc-kr)을 안전하게 디코딩
         soup = BeautifulSoup(res.content.decode('euc-kr', 'replace'), 'html.parser')
         
-        # 페이지 내의 모든 표의 행(tr)을 탐색
         rows = soup.find_all('tr')
         
         for row in rows:
             cols = row.find_all('td')
-            # 첫 번째 칸(cols[0])에 '외국인'이라는 단어가 포함되어 있다면
-            if cols and '외국인' in cols[0].text:
-                # [투자자, 거래소, 코스닥, 선물, 콜, 풋] 순서이므로 선물은 4번째(인덱스 3)
-                futures_str = cols[3].text.replace(',', '').strip()
-                return float(futures_str)
+            # 열이 4개 이상 존재하는 유의미한 행인지 검사
+            if len(cols) >= 4:
+                # 텍스트 내부의 모든 공백, 탭, 줄바꿈 완전 제거 후 비교
+                row_name = cols[0].text.replace(' ', '').replace('\n', '').replace('\t', '')
                 
+                if '외국인' in row_name:
+                    # 선물 데이터는 4번째 칸(index 3)
+                    val_str = cols[3].text.replace(',', '').strip()
+                    if val_str:
+                        return float(val_str)
+                        
         return 0.0 # 데이터를 못 찾았을 경우
         
     except Exception as e:
-        st.error(f"외국인 선물 데이터 크롤링 에러: {e}")
+        print(f"외국인 선물 데이터 크롤링 에러: {e}")
         return 0.0
 # -----------------------------------------------------------------------------
 # [섹션 1 & 2] 시장 동향 및 수급
@@ -232,15 +236,28 @@ if 'foreign_futures_net' not in st.session_state:
     st.session_state.foreign_futures_net = get_foreign_investor_trend()
 
 foreign_futures_net = st.session_state.foreign_futures_net
-program_intensity = min(100, int(foreign_futures_net / 50)) if foreign_futures_net >= 0 else max(0, 100 - min(100, int(abs(foreign_futures_net) / 50)))
-trade_signal = "🚀 우량주 단타 적극 추천 (바스켓 매수 유입)" if foreign_futures_net >= 0 else "⚠️ 대형주 단타 자제 (프로그램 매물 압력)"
-delta_msg = "매수 우위 (시장 주도)" if foreign_futures_net >= 0 else "매도 우위 (시장 압박)"
-score_color = "normal" if foreign_futures_net >= 0 else "inverse"
+
+# ✨ 값이 양수, 음수, 0일 때를 명확히 3단계로 분리
+if foreign_futures_net > 0:
+    program_intensity = min(100, int(foreign_futures_net / 50))
+    trade_signal = "🚀 우량주 단타 적극 추천 (바스켓 매수 유입)"
+    delta_msg = "매수 우위 (시장 주도)"
+    score_color = "normal"
+elif foreign_futures_net < 0:
+    program_intensity = max(0, 100 - min(100, int(abs(foreign_futures_net) / 50)))
+    trade_signal = "⚠️ 대형주 단타 자제 (프로그램 매물 압력)"
+    delta_msg = "매도 우위 (시장 압박)"
+    score_color = "inverse"
+else:
+    # ✨ 0.0일 때는 에러 혹은 수급 공백 상태로 처리 (가짜 추천 방지)
+    program_intensity = 50 
+    trade_signal = "⏸️ 수급 데이터 대기 중 (장 마감 또는 집계 지연)"
+    delta_msg = "데이터 없음"
+    score_color = "off"
 
 col_m1, col_m2 = st.columns(2)
 col_m1.metric(label="외국인 주식선물 순매수 금액", value=f"{foreign_futures_net:,} 억 원", delta=delta_msg, delta_color=score_color)
 col_m2.metric(label="시장 전체 우량주 매력도 환경 (100점 만점)", value=f"{program_intensity} 점", delta=trade_signal, delta_color=score_color)
-
 if st.button("🔄 실시간 데이터 업데이트 (수동)"):
     st.session_state.foreign_futures_net = get_foreign_investor_trend()
     get_kis_top_trading_value_stocks.clear()
