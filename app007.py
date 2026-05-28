@@ -8,6 +8,8 @@ from datetime import datetime, timedelta, timezone
 import FinanceDataReader as fdr 
 import io
 from bs4 import BeautifulSoup
+import joblib
+import os
 
 # -----------------------------------------------------------------------------
 # [설정] 한국투자증권 API KEY (Streamlit Secrets 활용)
@@ -282,9 +284,9 @@ if auto_refresh:
         st.error("⚠️ streamlit-autorefresh 라이브러리가 설치되지 않았습니다. requirements.txt를 확인해주세요.")
 
 # -----------------------------------------------------------------------------
-# [섹션 3] 개별 종목 스크리닝 (단기 목표가, 손절가, 실시간 매매 상태 추가)
+# [섹션 3] 개별 종목 스크리닝 및 🤖 AI 상승 예측 스코어링
 # -----------------------------------------------------------------------------
-st.subheader("🎯 단타 타겟 Top 30 (우량주 매력도 점수 랭킹 순)")
+st.subheader("🎯 단타 타겟 Top 30 (AI 상승 예측 랭킹 순)")
 
 df_universe = get_kis_top_trading_value_stocks()
 
@@ -292,34 +294,56 @@ if not df_universe.empty:
     cond_rise = df_universe['등락률'] > -2.0
     filtered_df = df_universe[cond_rise].copy()
 
-    # 지표 계산
-    filtered_df['우량주_매력도_점수'] = ((filtered_df['등락률'] * 1.5) + (np.log1p(filtered_df['거래대금']) * 2.5)).round(1)
-    filtered_df['테마'] = filtered_df['종목명'].apply(get_theme_icon)
+    # ==========================================================
+    # 🧠 AI 예측 모델 적용 구간
+    # ==========================================================
+    # 1. 모델이 예측에 사용할 특징(Feature) 데이터 추출
+    # (주의: 실제 모델을 학습시킬 때 사용한 컬럼 순서와 동일해야 합니다)
+    X_live = filtered_df[['등락률', '거래대금', '현재가']].fillna(0)
     
-    # 실전 단타 가이드라인 계산
+    model_path = "stock_model.pkl" # 학습된 AI 모델 파일명
+    
+    # 2. 모델 파일이 서버(또는 폴더)에 존재하는지 확인
+    if os.path.exists(model_path):
+        try:
+            # 학습된 모델 메모리에 올리기
+            model = joblib.load(model_path)
+            
+            # 실시간 데이터(X_live)를 넣어서 상승 확률(또는 예측 점수) 추론
+            ai_predictions = model.predict(X_live)
+            
+            # 예측 결과를 데이터프레임에 파생 변수로 추가
+            filtered_df['우량주_매력도_점수'] = np.round(ai_predictions, 2)
+            
+        except Exception as e:
+            st.error(f"⚠️ AI 모델 예측 중 에러 발생: {e}")
+            # 에러 발생 시 프로그램이 멈추지 않도록 기본 수식으로 대체
+            filtered_df['우량주_매력도_점수'] = ((filtered_df['등락률'] * 1.5) + (np.log1p(filtered_df['거래대금']) * 2.5)).round(1)
+    else:
+        # 모델 파일이 아직 없을 때 돌아가는 기본(Fallback) 알고리즘
+        st.info("⚠️ 'stock_model.pkl' AI 모델 파일이 없어 기본 수식으로 점수를 계산합니다.")
+        filtered_df['우량주_매력도_점수'] = ((filtered_df['등락률'] * 1.5) + (np.log1p(filtered_df['거래대금']) * 2.5)).round(1)
+    # ==========================================================
+
+    filtered_df['테마'] = filtered_df['종목명'].apply(get_theme_icon)
     filtered_df['단기_목표가'] = (filtered_df['현재가'] * 1.03).astype(int)
     filtered_df['손절가'] = (filtered_df['현재가'] * 0.98).astype(int)
     filtered_df['상한가_여력'] = (30.0 - filtered_df['등락률']).round(2)
 
-    # ✨ [추가] 메인 표 노출용 실시간 매매 상태 분별 알고리즘
     def detect_signal(row):
-        # 상승률이 강하고 대금이 상위권으로 치솟는 상태 -> 돌파형
-        if row['등락률'] >= 7.0 and row['거래대금'] > 50000:
-            return "🔥 돌파매매"
-        # 거래대금은 살아있으나 주가가 적정 수준에서 지지/숨고르기 중 -> 눌림목형
-        elif 1.0 <= row['등락률'] < 5.0 and row['거래대금'] > 20000:
-            return "💧 눌림목"
+        if row['등락률'] >= 7.0 and row['거래대금'] > 50000: return "🔥 돌파매매"
+        elif 1.0 <= row['등락률'] < 5.0 and row['거래대금'] > 20000: return "💧 눌림목"
         return "▪️ 관망"
 
     filtered_df['매매상태'] = filtered_df.apply(detect_signal, axis=1)
 
+    # AI 점수가 가장 높은 상위 30개 종목 추출
     top_30 = filtered_df.sort_values(by='우량주_매력도_점수', ascending=False).head(30)
 
-    # 출력용 데이터프레임 구성 ('매매상태' 열을 중요한 앞쪽에 배치)
     output_df = pd.DataFrame({
         '테마': top_30['테마'],
-        '실시간 상태': top_30['매매상태'], # 👈 추가된 항목
-        '매력도 점수': top_30['우량주_매력도_점수'].apply(lambda x: f"{x} 점"),
+        '실시간 상태': top_30['매매상태'],
+        'AI 점수': top_30['우량주_매력도_점수'].apply(lambda x: f"{x} 점"), # 이름 변경
         '종목명': top_30['종목명'],
         '현재가': top_30['현재가'].apply(lambda x: f"{int(x):,} 원"),
         '상승률': top_30['등락률'].apply(lambda x: f"+{x:.2f} %"),
@@ -342,7 +366,6 @@ if not df_universe.empty:
 else:
     st.error("데이터를 불러오지 못했습니다. 장외 시간이거나 API 호출 초과일 수 있습니다.")
     output_df = pd.DataFrame()
-
 # -----------------------------------------------------------------------------
 # [섹션 4] 종목 클릭 시 KIS 1분봉 시각화 (돌파/눌림 신호 및 캔들차트 적용)
 # -----------------------------------------------------------------------------
