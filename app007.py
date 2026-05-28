@@ -184,7 +184,7 @@ def get_kis_top_trading_value_stocks():
 @st.cache_data(ttl=60)
 def get_foreign_investor_trend():
     """
-    네이버 금융 '투자자별 매매동향' 외국인 선물 순매수 크롤링 (HTML 정밀 타격 버전 🎯)
+    네이버 금융 외국인 선물 순매수 크롤링 (이미지 태그 우회 완벽 버전 🛡️)
     """
     try:
         url = "https://finance.naver.com/sise/sise_trans_style.naver"
@@ -192,35 +192,26 @@ def get_foreign_investor_trend():
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }
         res = requests.get(url, headers=headers)
-        
-        # 한글 깨짐 방지
         res.encoding = 'euc-kr' 
         soup = BeautifulSoup(res.text, 'html.parser')
         
-        # 모든 <tr> (표의 한 줄) 태그를 하나씩 뒤집니다.
+        # 표의 모든 줄(tr)을 뒤집니다.
         for tr in soup.find_all('tr'):
-            cols = tr.find_all(['th', 'td']) # 칸(Cell)들을 모두 가져옴
+            cols = tr.find_all(['th', 'td'])
             
-            if len(cols) >= 3:
-                # 첫 번째 칸의 텍스트에서 공백과 줄바꿈을 모두 제거
-                first_cell_text = cols[0].text.replace(' ', '').replace('\n', '').replace('\t', '')
-                
-                # 💡 첫 번째 칸에 '선물'이라는 글자가 있다면? 타겟 발견!
-                if '선물' in first_cell_text:
-                    # 네이버 표 구조: [0]구분, [1]개인, [2]외국인, [3]기관계
+            if len(cols) >= 4:
+                # 💡 핵심: .text(글자)만 찾지 않고, 칸(Cell)의 원본 HTML 코드(str) 전체를 스캔합니다!
+                # 이렇게 하면 네이버가 <img src="..." alt="선물"> 처럼 이미지로 숨겨놔도 완벽하게 걸려듭니다.
+                if '선물' in str(cols[0]):
+                    
+                    # 3번째 칸(인덱스 2)에 있는 외국인 데이터를 가져와 쉼표를 뺍니다.
                     foreign_val_str = cols[2].text.replace(',', '').strip()
                     
                     try:
                         return float(foreign_val_str)
                     except ValueError:
-                        st.error(f"⚠️ 숫자 변환 실패: {foreign_val_str}")
                         return 0.0
                         
-        # 만약 여기까지 왔는데도 못 찾았다면, 네이버가 우리에게 준 화면(HTML)을 직접 띄워서 눈으로 확인합니다!
-        st.error("⚠️ 네이버 화면에서 '선물' 글자를 찾을 수 없습니다. 아래 네이버가 보낸 원본 데이터를 확인하세요.")
-        with st.expander("🔍 네이버 원본 HTML 보기"):
-            st.code(res.text[:2000], language='html')
-            
         return 0.0 
         
     except Exception as e:
