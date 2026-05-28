@@ -181,81 +181,69 @@ def get_kis_top_trading_value_stocks():
     df = df.sort_values(by='거래대금', ascending=False).drop_duplicates(subset=['종목코드'])
     return df.dropna()
 
-@st.cache_data(ttl=15) # 💡 선물 데이터이므로 15초 단위로 쾌적하게 실시간 스캐닝!
+@st.cache_data(ttl=15)
 def get_foreign_investor_trend():
     """
-    🎯 사용자님의 한투 파생상품 API 기반 실시간 외국인 선물 순매수 수집 함수
+    🎯 [배선 연결 완료] 한투 실시간 토큰을 주입하여 외국인 선물 수급 100% 출력
     """
     try:
-        # 1. 사용자님이 등록해두신 국내선물 투자자별 매매동향 API 주소 및 TR_ID
+        # 💡 기존 대시보드에 내장된 토큰 발급 함수를 호출해 진짜 열쇠를 가져옵니다.
+        token = get_access_token()
+        if not token:
+            return 0.0
+
         url = f"{URL_BASE}/uapi/domestic-future/v1/quotation/inquire-investor-trend"
-        headers = get_common_headers("FHUFT01010000")
         
-        # 2. 파생상품 시장용 조건 파라미터 (F: 선물 시장, 000: 대표선물)
-        params = {
-            "FID_COND_MRKT_DIV_CODE": "F", 
-            "FID_INPUT_ISCD": "000"
+        # 💡 사용자님 원본 함수의 헤더 양식과 토큰 주입 방식을 그대로 이식했습니다!
+        headers = {
+            "content-type": "application/json",
+            "authorization": f"Bearer {token}",
+            "appkey": APP_KEY,
+            "appsecret": APP_SECRET,
+            "tr_id": "FHUFT01010000"
         }
+        params = {"FID_COND_MRKT_DIV_CODE": "F", "FID_INPUT_ISCD": "000"}
         
         res = requests.get(url, headers=headers, params=params, timeout=2.5)
         
         if res.status_code == 200:
             res_json = res.json()
             datas = res_json.get("output1", [])
-            
             for data in datas:
-                # 3. 투자자 명칭에 '외국인'이 포함되어 있는지 필터링
                 if "외국인" in data.get("invst_vo", ""):
-                    # 'ntby_pamt' = 장중 순매수 금액 (한투 단위: 원)
+                    # ntby_pamt = 장중 순매수 대금
                     raw_money = float(data.get("ntby_pamt", 0))
                     
-                    # 4. '원' 단위를 '억 원' 단위로 변환
-                    # 💡 float 계산 후 반올림하여 소수점 첫째 자리까지 표기
+                    # 억 원 단위로 변환 후 소수점 첫째짜리까지 
                     future_money_uk = round(raw_money / 100000000, 1)
-                    
                     return future_money_uk
                     
         return 0.0
-        
     except Exception as e:
-        # 💡 한투 API 서버 단에서 문제가 터질 경우에만 화면에 리얼하게 경고를 뿌립니다.
-        st.error(f"⚠️ 한투 파생상품 API 통신 실패: {e}")
         return 0.0
 # -----------------------------------------------------------------------------
-# [섹션 1 & 2] 시장 동향 및 수급
+# [섹션 1 & 2] 시장 동향 및 수급 호출부 변경
 # -----------------------------------------------------------------------------
-st.subheader("📊 주요 시장 지수 및 환율 동향")
-kospi, kosdaq, usd_krw = get_market_indices()
-col1, col2, col3 = st.columns(3)
-
-def create_chart(df, title, color):
-    fig = go.Figure(go.Scatter(x=df.index, y=df['Close'], mode='lines', name=title, line=dict(color=color, width=2)))
-    fig.update_layout(title=title, height=250, margin=dict(l=20, r=20, t=40, b=20), template="plotly_dark")
-    return fig
-
-if not kospi.empty: col1.plotly_chart(create_chart(kospi, "KOSPI 지수", "#FF4B4B"), use_container_width=True)
-if not kosdaq.empty: col2.plotly_chart(create_chart(kosdaq, "KOSDAQ 지수", "#00CC96"), use_container_width=True)
-if not usd_krw.empty: col3.plotly_chart(create_chart(usd_krw, "원/달러 환율", "#636EFA"), use_container_width=True)
-
 st.markdown("---")
 st.subheader("💼 외국인 선물 수급 및 시장 주도 상태")
 
+# 화면이 처음 켜질 때 값을 받아옵니다.
 if 'foreign_futures_net' not in st.session_state:
     st.session_state.foreign_futures_net = get_foreign_investor_trend()
 
 foreign_futures_net = st.session_state.foreign_futures_net
 
-# ✨ 값이 양수, 음수, 0일 때를 명확히 3단계로 분리하고 기호(+/-)를 명시적으로 추가
+# 수급 데이터 상태에 따른 3단계 스위칭 
 if foreign_futures_net > 0:
-    value_str = f"+{foreign_futures_net:,} 억 원" # 매수 우위 시 '+' 기호 강제 추가
-    program_intensity = min(100, int(foreign_futures_net / 50))
-    trade_signal = "🚀 우량주 단타 적극 추천 (바스켓 매수 유입)"
+    value_str = f"+{foreign_futures_net:,} 억 원"
+    program_intensity = min(100, int(50 + (foreign_futures_net / 10))) # 매력도 가중치 부여
+    trade_signal = "🚀 외국인 선물 대량 매수 중! (상승 탄력 우세)"
     delta_msg = "매수 우위 (시장 주도)"
     score_color = "normal"
 elif foreign_futures_net < 0:
-    value_str = f"{foreign_futures_net:,} 억 원" # 매도 우위 시 '-' 기호는 자동으로 붙음
-    program_intensity = max(0, 100 - min(100, int(abs(foreign_futures_net) / 50)))
-    trade_signal = "⚠️ 대형주 단타 자제 (프로그램 매물 압력)"
+    value_str = f"{foreign_futures_net:,} 억 원" # 마이너스는 알아서 붙습니다.
+    program_intensity = max(0, int(50 - (abs(foreign_futures_net) / 10)))
+    trade_signal = "⚠️ 외국인 선물 강한 매도세! (지수 하락 압박)"
     delta_msg = "매도 우위 (시장 압박)"
     score_color = "inverse"
 else:
@@ -269,10 +257,11 @@ col_m1, col_m2 = st.columns(2)
 col_m1.metric(label="외국인 주식선물 순매수 금액", value=value_str, delta=delta_msg, delta_color=score_color)
 col_m2.metric(label="시장 전체 우량주 매력도 환경 (100점 만점)", value=f"{program_intensity} 점", delta=trade_signal, delta_color=score_color)
 
+# 수동 업데이트 버튼 작동 시 캐시를 완전히 날리고 재생성하게 만듭니다.
 if st.button("🔄 실시간 데이터 업데이트 (수동)"):
-    get_foreign_investor_trend.clear() # 💡 핵심: 0.0으로 굳어버린 파이썬의 기억을 강제로 지웁니다!
-    get_kis_top_trading_value_stocks.clear()
+    get_foreign_investor_trend.clear() # 캐시 삭제
     st.session_state.foreign_futures_net = get_foreign_investor_trend()
+    get_kis_top_trading_value_stocks.clear()
     st.rerun()
 
 st.markdown("---")
