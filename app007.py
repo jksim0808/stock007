@@ -184,38 +184,43 @@ def get_kis_top_trading_value_stocks():
 @st.cache_data(ttl=60)
 def get_foreign_investor_trend():
     """
-    네이버 금융 외국인 선물 순매수 크롤링 (이미지 태그 우회 완벽 버전 🛡️)
+    네이버 금융 실시간 수급 실시간 API 직접 타격 버전 (함정 완전 돌파 🚀)
     """
     try:
-        url = "https://finance.naver.com/sise/sise_trans_style.naver"
+        # 💡 네이버 금융이 화면 뒤에서 실제로 수급 데이터를 주고받는 진짜 비밀 주소입니다!
+        url = "https://finance.naver.com/sise/investorDealTrendTime.naver?bizdate=20260528&sosok="
+        
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Referer": "https://finance.naver.com/sise/sise_trans_style.naver"
         }
+        
         res = requests.get(url, headers=headers)
-        res.encoding = 'euc-kr' 
+        res.encoding = 'euc-kr'
+        
+        # 💡 이 주소는 오직 '선물'과 '콜옵션/풋옵션' 실시간 데이터만 깔끔하게 담겨 있습니다.
         soup = BeautifulSoup(res.text, 'html.parser')
         
-        # 표의 모든 줄(tr)을 뒤집니다.
+        # 표의 모든 줄을 탐색
         for tr in soup.find_all('tr'):
-            cols = tr.find_all(['th', 'td'])
-            
+            cols = tr.find_all(['td', 'th'])
             if len(cols) >= 4:
-                # 💡 핵심: .text(글자)만 찾지 않고, 칸(Cell)의 원본 HTML 코드(str) 전체를 스캔합니다!
-                # 이렇게 하면 네이버가 <img src="..." alt="선물"> 처럼 이미지로 숨겨놔도 완벽하게 걸려듭니다.
-                if '선물' in str(cols[0]):
-                    
-                    # 3번째 칸(인덱스 2)에 있는 외국인 데이터를 가져와 쉼표를 뺍니다.
-                    foreign_val_str = cols[2].text.replace(',', '').strip()
+                cell_text = cols[0].text.replace(' ', '').strip()
+                
+                # 가로줄 이름이 '선물'인 행을 정확히 조준
+                if '선물' in cell_text:
+                    # 외국인 순매수 금액은 3번째 칸(인덱스 2)에 들어있습니다.
+                    foreign_val_str = cols[2].text.replace(',', '').replace('+', '').strip()
                     
                     try:
                         return float(foreign_val_str)
                     except ValueError:
                         return 0.0
                         
-        return 0.0 
+        return 0.0
         
     except Exception as e:
-        st.error(f"⚠️ 크롤링 에러 상세: {e}")
+        st.error(f"⚠️ 실시간 API 통신 에러: {e}")
         return 0.0
 # -----------------------------------------------------------------------------
 # [섹션 1 & 2] 시장 동향 및 수급
