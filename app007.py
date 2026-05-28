@@ -184,7 +184,7 @@ def get_kis_top_trading_value_stocks():
 @st.cache_data(ttl=60)
 def get_foreign_investor_trend():
     """
-    네이버 금융 실시간 수급 크롤링 (스트림릿 캐시 문제 해결 버전 🚀)
+    [최종 결전] 글자 검색 포기! 무조건 3번째 줄(선물), 3번째 칸(외국인) 좌표를 강제로 뜯어옵니다 🎯
     """
     try:
         url = "https://finance.naver.com/sise/sise_trans_style.naver"
@@ -196,20 +196,36 @@ def get_foreign_investor_trend():
         
         soup = BeautifulSoup(res.text, 'html.parser')
         
-        # 표의 모든 가로줄(tr)을 탐색합니다.
-        for tr in soup.find_all('tr'):
-            cols = tr.find_all('td') # 데이터 칸(td)만 정확히 뽑아냅니다.
+        # 네이버 수급 표(class="type_1")를 찾습니다.
+        table = soup.find('table', class_='type_1')
+        if not table:
+            st.error("⚠️ 네이버 표(table) 자체를 찾을 수 없습니다.")
+            return 0.0
             
-            # 칸이 4개(구분, 개인, 외국인, 기관)인 줄인지 확인
+        # 실제 데이터가 있는 줄(칸이 4개 이상인 줄)만 순서대로 차곡차곡 모읍니다.
+        real_rows = []
+        for tr in table.find_all('tr'):
+            cols = tr.find_all('td')
             if len(cols) >= 4:
-                # 첫 번째 칸에 '선물'이라는 글자가 있다면
-                if '선물' in cols[0].text:
-                    # 세 번째 칸(인덱스 2)에 있는 외국인 데이터를 가져옵니다.
-                    val_str = cols[2].text.replace(',', '').replace('+', '').strip()
-                    
-                    if val_str:
-                        return float(val_str)
-                        
+                real_rows.append(cols)
+                
+        # 💡 네이버 표의 절대 불변 법칙:
+        # real_rows[0] = 코스피
+        # real_rows[1] = 코스닥
+        # real_rows[2] = 선물 (🎯 우리가 뜯어올 타겟!)
+        
+        if len(real_rows) >= 3:
+            # 3번째 줄(인덱스 2)에서, 외국인 칸(인덱스 2)의 데이터만 정확히 가져옵니다.
+            foreign_val_str = real_rows[2][2].text.replace(',', '').replace('+', '').strip()
+            
+            try:
+                # 뜯어온 글자를 숫자로 변환
+                return float(foreign_val_str)
+            except ValueError:
+                # 만약 숫자가 아닌 이상한 글자를 가져왔다면 화면에 에러로 띄워서 범인을 검거합니다!
+                st.error(f"⚠️ 숫자 변환 실패! 파이썬이 뜯어온 이상한 데이터: '{foreign_val_str}'")
+                return 0.0
+                
         return 0.0 
         
     except Exception as e:
