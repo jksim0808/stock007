@@ -234,39 +234,44 @@ if not usd_krw.empty: col3.plotly_chart(create_chart(usd_krw, "원/달러 환율
 st.markdown("---")
 st.subheader("💼 외국인 선물 수급 및 시장 주도 상태")
 
+st.markdown("---")
+st.subheader("💼 외국인 선물 수급 및 시장 주도 상태")
+
 if 'foreign_futures_net' not in st.session_state:
     st.session_state.foreign_futures_net = get_foreign_investor_trend()
 
 foreign_futures_net = st.session_state.foreign_futures_net
 
-# ✨ 값이 양수, 음수, 0일 때를 명확히 3단계로 분리
+# ✨ 값이 양수, 음수, 0일 때를 명확히 3단계로 분리하고 기호(+/-)를 명시적으로 추가
 if foreign_futures_net > 0:
+    value_str = f"+{foreign_futures_net:,} 억 원" # 매수 우위 시 '+' 기호 강제 추가
     program_intensity = min(100, int(foreign_futures_net / 50))
     trade_signal = "🚀 우량주 단타 적극 추천 (바스켓 매수 유입)"
     delta_msg = "매수 우위 (시장 주도)"
     score_color = "normal"
 elif foreign_futures_net < 0:
+    value_str = f"{foreign_futures_net:,} 억 원" # 매도 우위 시 '-' 기호는 자동으로 붙음
     program_intensity = max(0, 100 - min(100, int(abs(foreign_futures_net) / 50)))
     trade_signal = "⚠️ 대형주 단타 자제 (프로그램 매물 압력)"
     delta_msg = "매도 우위 (시장 압박)"
     score_color = "inverse"
 else:
-    # ✨ 0.0일 때는 에러 혹은 수급 공백 상태로 처리 (가짜 추천 방지)
+    value_str = "0.0 억 원"
     program_intensity = 50 
     trade_signal = "⏸️ 수급 데이터 대기 중 (장 마감 또는 집계 지연)"
     delta_msg = "데이터 없음"
     score_color = "off"
 
 col_m1, col_m2 = st.columns(2)
-col_m1.metric(label="외국인 주식선물 순매수 금액", value=f"{foreign_futures_net:,} 억 원", delta=delta_msg, delta_color=score_color)
+col_m1.metric(label="외국인 주식선물 순매수 금액", value=value_str, delta=delta_msg, delta_color=score_color)
 col_m2.metric(label="시장 전체 우량주 매력도 환경 (100점 만점)", value=f"{program_intensity} 점", delta=trade_signal, delta_color=score_color)
+
 if st.button("🔄 실시간 데이터 업데이트 (수동)"):
     st.session_state.foreign_futures_net = get_foreign_investor_trend()
     get_kis_top_trading_value_stocks.clear()
     st.rerun()
 
 st.markdown("---")
-
 # -----------------------------------------------------------------------------
 # ⏱️ [자동 새로고침 스위치] 함수 정의가 모두 끝난 안전한 곳에 위치
 # -----------------------------------------------------------------------------
