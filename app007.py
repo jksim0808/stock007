@@ -184,17 +184,15 @@ def get_kis_top_trading_value_stocks():
 @st.cache_data(ttl=15)
 def get_foreign_investor_trend():
     """
-    🎯 [배선 연결 완료] 한투 실시간 토큰을 주입하여 외국인 선물 수급 100% 출력
+    🔍 한투 서버가 데이터를 안 주는 진짜 이유를 화면에 강제로 폭로하는 디버깅 함수
     """
     try:
-        # 💡 기존 대시보드에 내장된 토큰 발급 함수를 호출해 진짜 열쇠를 가져옵니다.
         token = get_access_token()
         if not token:
+            st.error("🚨 [인증 실패] 토큰을 발급받지 못했습니다. API Key를 확인하세요.")
             return 0.0
 
         url = f"{URL_BASE}/uapi/domestic-future/v1/quotation/inquire-investor-trend"
-        
-        # 💡 사용자님 원본 함수의 헤더 양식과 토큰 주입 방식을 그대로 이식했습니다!
         headers = {
             "content-type": "application/json",
             "authorization": f"Bearer {token}",
@@ -205,21 +203,28 @@ def get_foreign_investor_trend():
         params = {"FID_COND_MRKT_DIV_CODE": "F", "FID_INPUT_ISCD": "000"}
         
         res = requests.get(url, headers=headers, params=params, timeout=2.5)
+        res_json = res.json()
         
-        if res.status_code == 200:
-            res_json = res.json()
-            datas = res_json.get("output1", [])
-            for data in datas:
-                if "외국인" in data.get("invst_vo", ""):
-                    # ntby_pamt = 장중 순매수 대금
-                    raw_money = float(data.get("ntby_pamt", 0))
-                    
-                    # 억 원 단위로 변환 후 소수점 첫째짜리까지 
-                    future_money_uk = round(raw_money / 100000000, 1)
-                    return future_money_uk
-                    
+        # 💡 [과학수사 핵심] 성공 코드가 아닐 때 한투가 보낸 메시지를 그대로 화면에 박아버립니다!
+        if res_json.get('rt_cd') != '0':
+            st.error(f"❌ 한투 서버 거절 메시지: {res_json.get('msg1')} (코드: {res_json.get('rt_cd')})")
+            return 0.0
+            
+        datas = res_json.get("output1", [])
+        
+        # 만약 성공했는데 데이터가 텅 비어있다면? (1번 혹은 3번 용의자 확정)
+        if not datas:
+            st.warning("⚠️ 한투 서버접속은 성공했으나, 현재 장외 시간이거나 모의계좌 권한 제한으로 데이터가 텅 비어있습니다(Empty).")
+            return 0.0
+            
+        for data in datas:
+            if "외국인" in data.get("invst_vo", ""):
+                raw_money = float(data.get("ntby_pamt", 0))
+                return round(raw_money / 100000000, 1)
+                
         return 0.0
     except Exception as e:
+        st.error(f"🔥 시스템 에러: {e}")
         return 0.0
 # -----------------------------------------------------------------------------
 # [섹션 1 & 2] 시장 동향 및 수급 호출부 변경
