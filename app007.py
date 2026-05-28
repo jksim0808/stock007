@@ -181,44 +181,46 @@ def get_kis_top_trading_value_stocks():
     df = df.sort_values(by='거래대금', ascending=False).drop_duplicates(subset=['종목코드'])
     return df.dropna()
 
-@st.cache_data(ttl=15) # 💡 가볍고 완벽한 데이터이므로 15초마다 초고속 갱신!
+@st.cache_data(ttl=30) 
 def get_foreign_investor_trend():
     """
-    한투 권한 에러 및 네이버 PC 차단을 완벽히 우회하는 모바일 데이터 정밀 타격 버전 🎯
+    네이버/한투 모두 폐기! 가장 안정적인 '다음(Daum) 금융' 실시간 수급 API 정밀 타격 🎯
     """
     try:
-        # 💡 네이버가 모바일 앱/웹용으로 실시간 수급을 쏠 때 쓰는 '검증된 무방비 통로' 주소입니다.
-        url = "https://m.stock.naver.com/api/json/sise/investorDealTrendTime.nhn?bizdate=20260528&sosok="
+        # 💡 다음(Daum) 금융의 코스피 투자자별 매매동향 API 주소
+        url = "https://finance.daum.net/api/investor/days?page=1&perPage=1&market=KOSPI&pagination=true"
         
+        # 💡 다음 금융 서버를 통과하기 위한 마법의 출입증 (Referer)
         headers = {
-            "User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
-            "Referer": "https://m.stock.naver.com/"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Referer": "https://finance.daum.net/domestic/investors", # 핵심! 이 주소에서 온 것처럼 속입니다.
+            "Accept": "application/json"
         }
         
         res = requests.get(url, headers=headers, timeout=5)
-        res.encoding = 'utf-8'
         
-        # 💡 모바일 주소는 HTML이 아니라 '순수 데이터(JSON)'로 넘어오기 때문에 완벽한 가공이 가능합니다!
-        data = res.json()
-        
-        # 데이터 묶음에서 선물(Futures) 코드를 찾아 직접 타격합니다.
-        # 네이버 내부 코드 순서: 코스피(0), 코스닥(1), 선물(2)
-        if 'result' in data and 'dealTrendTimeList' in data['result']:
-            trend_list = data['result']['dealTrendTimeList']
+        # 접속 성공 (200 OK) 확인
+        if res.status_code == 200:
+            data = res.json()
             
-            # 🎯 안전하게 '선물' 항목을 직접 검색해서 가져옵니다.
-            for item in trend_list:
-                if '선물' in item.get('item', ''):
-                    # 외국인 순매수 금액 (단위: 억 원)
-                    # 모바일 API는 'frgn' 필드에 외국인 순매수 금액을 정확히 실시간으로 채워줍니다!
-                    foreign_net_buy = float(item.get('frgn', 0))
-                    return foreign_net_buy
-                    
+            # 데이터 꾸러미가 정상적으로 있다면
+            if 'data' in data and len(data['data']) > 0:
+                # 첫 번째 줄이 바로 '오늘 실시간 누적 데이터'입니다.
+                today_data = data['data'][0]
+                
+                # 🎯 'foreignStraightAmt' = 외국인 순매수 금액 (단위: 원)
+                # 보기 좋게 억 단위로 나누어 줍니다.
+                foreign_net_buy_won = today_data.get('foreignStraightAmt', 0)
+                foreign_net_buy_uk = foreign_net_buy_won / 100000000 
+                
+                return round(foreign_net_buy_uk, 1)
+                
+        # 만약 다음 서버가 응답하지 않는다면
+        st.warning(f"⚠️ 다음 금융 서버 지연 (상태코드: {res.status_code})")
         return 0.0
         
     except Exception as e:
-        # 💡 혹시나 모바일 주소 방식에 에러가 나면 브라우저에 투명하게 오픈합니다.
-        st.error(f"⚠️ 모바일 우회 채널 통신 실패: {e}")
+        st.error(f"⚠️ 수급 통신 실패: {e}")
         return 0.0
 # -----------------------------------------------------------------------------
 # [섹션 1 & 2] 시장 동향 및 수급
