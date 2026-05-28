@@ -184,22 +184,24 @@ def get_kis_top_trading_value_stocks():
 @st.cache_data(ttl=30)
 def get_foreign_investor_trend():
     """
-    한국투자증권(KIS) API - 날짜 파라미터가 완벽하게 추가된 최종 수급 코드 🚀
+    한국투자증권(KIS) API - 깐깐한 빈칸 파라미터까지 완벽하게 채워 넣은 최종 수급 코드 🚀
     """
     try:
         url = f"{URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-investor-daily-by-market"
         headers = get_common_headers("FHPTJ04040000")
         
-        # 💡 오늘 날짜를 'YYYYMMDD' 형식으로 자동 생성합니다.
         today_str = datetime.now(KST).strftime('%Y%m%d')
         
-        # 💡 한투 서버가 요구하는 필수 입력값을 모두 꽉꽉 채워 넣습니다!
+        # 💡 한투 서버가 양식지에서 요구하는 모든 빈칸을 빈틈없이 제출합니다.
         params = {
-            "FID_COND_MRKT_DIV_CODE": "U", # U: 코스피 시장 전체
+            "FID_COND_MRKT_DIV_CODE": "U", # U: 코스피 시장 전체 (업종)
             "FID_INPUT_ISCD": "0001",      # 0001: 코스피 종합 지수
             "FID_INPUT_DATE_1": today_str, # 조회 시작일 (오늘)
             "FID_INPUT_DATE_2": today_str, # 조회 종료일 (오늘)
-            "FID_PERIOD_DIV_CODE": "D"     # D: 일별 데이터
+            "FID_PERIOD_DIV_CODE": "D",    # D: 일별 데이터
+            "FID_COND_SCR_DIV_CODE": "",   # 💡 API가 요구하는 화면 분류 코드 (빈칸)
+            "FID_INPUT_ISCD_1": "",        # 💡 에러의 원인! 요구하는 추가 종목 코드 1 (빈칸)
+            "FID_INPUT_ISCD_2": ""         # 💡 혹시 몰라 채워두는 추가 종목 코드 2 (빈칸)
         }
         
         res = requests.get(url, headers=headers, params=params)
