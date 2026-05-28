@@ -6,6 +6,7 @@ import requests
 import json
 from datetime import datetime, timedelta, timezone
 import FinanceDataReader as fdr 
+import io
 
 # -----------------------------------------------------------------------------
 # [설정] 한국투자증권 API KEY (Streamlit Secrets 활용)
@@ -80,7 +81,7 @@ def get_market_indices():
     today = datetime.now(KST).strftime('%Y-%m-%d')
     start_date = (datetime.now(KST) - timedelta(days=30)).strftime('%Y-%m-%d')
 
-    # 1. 코스피 & 코스닥 (fdr 자체 한국거래소 데이터 사용 - 에러 거의 없음)
+    # 1. 코스피 & 코스닥
     try:
         kospi = fdr.DataReader('KS11', start_date, today)
     except Exception:
@@ -91,33 +92,29 @@ def get_market_indices():
     except Exception:
         kosdaq = pd.DataFrame()
         
-    # 2. 원/달러 환율: 야후 차단을 피해 [네이버 금융]에서 직접 수집 🚀
+    # 2. 원/달러 환율 (네이버 금융)
     try:
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
         df_list = []
         
-        # 최근 30일치 데이터를 맞추기 위해 3페이지(약 30영업일) 스크래핑
         for page in range(1, 4):
             url = f"https://finance.naver.com/marketindex/exchangeDailyQuote.naver?marketindexCd=FX_USDKRW&page={page}"
             res = requests.get(url, headers=headers)
             
-            # HTML 표 데이터를 pandas로 쉽게 읽기 (한글 깨짐 방지 cp949)
-            df = pd.read_html(res.text, encoding='cp949')[0]
+            # ✨ 한글 깨짐을 방지하기 위해 응답 데이터의 인코딩을 명시
+            res.encoding = 'cp949'
+            
+            # ✨ 핵심 해결: res.text를 바로 넣지 않고 io.StringIO()로 감싸줍니다!
+            df = pd.read_html(io.StringIO(res.text))[0]
             df_list.append(df)
             
-        # 여러 페이지 합치기
         usd_krw = pd.concat(df_list, ignore_index=True)
-        
-        # 1열(날짜), 2열(매매기준율)만 추출 후 fdr 포맷과 동일하게 'Date', 'Close'로 변경
         usd_krw = usd_krw.iloc[:, [0, 1]] 
         usd_krw.columns = ['Date', 'Close']
         
-        # 데이터 정제: 빈 값 제거, 날짜 형식 변환(YYYY.MM.DD -> YYYY-MM-DD), 숫자 변환
         usd_krw = usd_krw.dropna()
         usd_krw['Date'] = pd.to_datetime(usd_krw['Date'].str.replace('.', '-', regex=False))
         usd_krw['Close'] = pd.to_numeric(usd_krw['Close'].astype(str).str.replace(',', ''), errors='coerce')
-        
-        # 차트를 그리기 위해 Date를 인덱스로 지정하고 과거순으로 정렬
         usd_krw = usd_krw.set_index('Date').sort_index()
         
     except Exception as e:
@@ -125,6 +122,7 @@ def get_market_indices():
         usd_krw = pd.DataFrame()
         
     return kospi, kosdaq, usd_krw
+    
 @st.cache_data(ttl=30)
 def get_kis_top_trading_value_stocks():
     url = f"{URL_BASE}/uapi/domestic-stock/v1/quotations/volume-rank"
