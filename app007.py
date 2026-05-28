@@ -181,42 +181,51 @@ def get_kis_top_trading_value_stocks():
     df = df.sort_values(by='거래대금', ascending=False).drop_duplicates(subset=['종목코드'])
     return df.dropna()
 
-@st.cache_data(ttl=30) # 💡 정품 데이터이므로 30초마다 쾌적하게 갱신!
+@st.cache_data(ttl=30)
 def get_foreign_investor_trend():
     """
-    네이버 크롤링 폐기! 한국투자증권(KIS) 정품 API로 외국인 선물 순매수 실시간 수집 🚀
+    한국투자증권(KIS) API 오류 원인 규명 및 정품 수급 데이터 확보 코드 🚀
     """
     try:
-        # 한국투자증권 실시간 투자자별 매매동향 (주간/일별) API 주소
-        url = f"{URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-investor"
+        # 정확한 '시장별 투자자 매매동향' API 주소
+        url = f"{URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-investor-daily-by-market"
         
-        # 한국투자증권 전용 필수 헤더 (tr_id: FHKST01010300 = 투자자별 매매동향)
-        headers = get_common_headers("FHKST01010300")
+        # 정확한 TR_ID (FHPTJ04040000 = 일별 시장별 투자자 매매동향)
+        headers = get_common_headers("FHPTJ04040000")
         
-        # 💡 코스피200 선물 시장의 실시간 수급을 보기 위해 대표 코드 '0001' 또는 '10100' 지정
-        # 여기서는 가장 대중적인 코스피 시장 전체의 외국인 수급을 타격합니다.
         params = {
-            "FID_COND_MRKT_DIV_CODE": "U", # 시장 구분 (U: 지수/투자자)
-            "FID_INPUT_ISCD": "0001"        # 코스피 지수 코드
+            "FID_COND_MRKT_DIV_CODE": "U", # U: 코스피 시장 전체
+            "FID_INPUT_ISCD": "0001"       # 0001: 코스피 종합 지수
         }
         
         res = requests.get(url, headers=headers, params=params)
         res_data = res.json()
         
-        if res_data.get('rt_cd') == '0' and 'output1' in res_data:
-            # output1의 가장 첫 번째 행이 '오늘 현재 실시간 누적 수급' 데이터입니다.
-            current_data = res_data['output1'][0]
+        # 1. 한투 서버가 정상적으로 데이터를 줬을 때
+        if res_data.get('rt_cd') == '0':
+            try:
+                # 데이터 꾸러미(output1 또는 output)에서 오늘자 첫 번째 줄 데이터를 꺼냅니다.
+                data_list = res_data.get('output1') or res_data.get('output')
+                today_data = data_list[0]
+                
+                # 'frgn_ntby_amt' = 외국인 순매수 금액
+                foreign_net_buy = float(today_data.get('frgn_ntby_amt', 0))
+                
+                return foreign_net_buy
+                
+            except Exception as parse_error:
+                # 💡 만약 한투가 주는 데이터의 이름(Key)이 예상과 다르다면, 원본을 화면에 강제로 띄웁니다!
+                st.error(f"⚠️ 데이터 구조가 다릅니다. KIS 원본 확인: {str(res_data)[:300]}")
+                return 0.0
+                
+        # 2. 한투 서버가 데이터를 안 주고 튕겨냈을 때 (🚨 여기가 핵심입니다)
+        else:
+            # 💡 한투에서 보낸 진짜 에러 메시지를 화면에 띄웁니다! (예: "필수 입력값이 누락되었습니다")
+            st.error(f"🚨 한투 API 거절 사유: {res_data.get('msg1')}")
+            return 0.0
             
-            # 🎯 외국인 순매수 대금 (한투 단위: 억 원)
-            # 'frgn_ntby_amt' = 외국인 순매수 금액
-            foreign_value = float(current_data['frgn_ntby_amt'])
-            
-            return foreign_value
-            
-        return 0.0
-        
     except Exception as e:
-        st.error(f"⚠️ 한투 수급 API 호출 실패: {e}")
+        st.error(f"⚠️ API 통신 자체 실패: {e}")
         return 0.0
 # -----------------------------------------------------------------------------
 # [섹션 1 & 2] 시장 동향 및 수급
