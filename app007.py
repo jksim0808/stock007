@@ -252,6 +252,96 @@ def get_foreign_investor_trend():
         pass
 
     return -250.0 # 최후의 보루: 대시보드 마이너스 기호 테스트용 강제 값
+
+
+# -----------------------------------------------------------------------------
+# [데이터 로드] 더 강력하고 안정적인 지수 및 환율 수집 함수
+# -----------------------------------------------------------------------------
+@st.cache_data(ttl=60)
+def get_market_indices_v2():
+    """안정성이 강화된 지수 및 환율 수집 버전"""
+    # 최근 20일간의 흐름을 보여주기 위해 기간 설정
+    end_date = datetime.now(KST).strftime('%Y-%m-%d')
+    start_date = (datetime.now(KST) - timedelta(days=20)).strftime('%Y-%m-%d')
+
+    # 1. 지수 데이터 (FinanceDataReader 활용)
+    try:
+        ks = fdr.DataReader('KS11', start_date, end_date) # 코스피
+        kq = fdr.DataReader('KQ11', start_date, end_date) # 코스닥
+    except:
+        ks, kq = pd.DataFrame(), pd.DataFrame()
+
+    # 2. 환율 데이터 (안정적인 USD/KRW 수집)
+    try:
+        usd = fdr.DataReader('USD/KRW', start_date, end_date)
+    except:
+        usd = pd.DataFrame()
+
+    return ks, kq, usd
+
+# -----------------------------------------------------------------------------
+# [차트 생성] 전문가 스타일의 영역 차트 (Area Chart)
+# -----------------------------------------------------------------------------
+def create_pro_chart(df, title, color_hex):
+    """HTS 스타일의 세련된 영역 차트 생성"""
+    if df.empty:
+        return go.Figure().update_layout(title="데이터 로드 실패")
+
+    # 전일 대비 상승/하락 계산
+    current_val = df['Close'].iloc[-1]
+    prev_val = df['Close'].iloc[-2] if len(df) > 1 else current_val
+    delta = current_val - prev_val
+    delta_percent = (delta / prev_val) * 100
+
+    fig = go.Figure()
+
+    # 1. 메인 영역 차트 (그라데이션 효과)
+    fig.add_trace(go.Scatter(
+        x=df.index, y=df['Close'],
+        mode='lines',
+        line=dict(color=color_hex, width=3),
+        fill='tozeroy', # 바닥까지 색 채우기
+        fillcolor=f"rgba({int(color_hex[1:3],16)}, {int(color_hex[3:5],16)}, {int(color_hex[5:7],16)}, 0.1)",
+        name=title
+    ))
+
+    # 2. 디자인 디테일 (HTS 느낌)
+    fig.update_layout(
+        title=dict(text=f"<b>{title}</b> <span style='font-size:14px; color:{'#ff4b4b' if delta >=0 else '#0068c9'}'>{current_val:,.2f} ({delta_percent:+.2f}%)</span>", x=0.05, y=0.85),
+        height=280,
+        margin=dict(l=10, r=10, t=50, b=10),
+        template="plotly_dark", # 다크 모드로 가독성 향상
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        xaxis=dict(showgrid=False, showticklabels=True),
+        yaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.05)', side='right'),
+        hovermode="x unified"
+    )
+    return fig
+
+# -----------------------------------------------------------------------------
+# [메인 화면 적용] 지수 대시보드 렌더링 구역
+# -----------------------------------------------------------------------------
+st.subheader("🌐 글로벌 시장 및 주요 지수 실시간 모니터링")
+ks_df, kq_df, usd_df = get_market_indices_v2()
+
+# 3단 칼럼 배치
+m_col1, m_col2, m_col3 = st.columns(3)
+
+with m_col1:
+    # 코스피 (Red)
+    st.plotly_chart(create_pro_chart(ks_df, "KOSPI", "#FF4B4B"), use_container_width=True)
+
+with m_col2:
+    # 코스닥 (Green)
+    st.plotly_chart(create_pro_chart(kq_df, "KOSDAQ", "#00CC96"), use_container_width=True)
+
+with m_col3:
+    # 환율 (Blue)
+    # 환율은 오르면 시장에 악재이므로 색상을 다르게 표기 가능
+    st.plotly_chart(create_pro_chart(usd_df, "USD/KRW", "#636EFA"), use_container_width=True)
+
+st.markdown("---")
 # -----------------------------------------------------------------------------
 # [섹션 1 & 2] 시장 동향 및 수급 호출부 변경
 # -----------------------------------------------------------------------------
