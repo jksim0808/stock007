@@ -184,48 +184,44 @@ def get_kis_top_trading_value_stocks():
 @st.cache_data(ttl=30)
 def get_foreign_investor_trend():
     """
-    한국투자증권(KIS) API 오류 원인 규명 및 정품 수급 데이터 확보 코드 🚀
+    한국투자증권(KIS) API - 날짜 파라미터가 완벽하게 추가된 최종 수급 코드 🚀
     """
     try:
-        # 정확한 '시장별 투자자 매매동향' API 주소
         url = f"{URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-investor-daily-by-market"
-        
-        # 정확한 TR_ID (FHPTJ04040000 = 일별 시장별 투자자 매매동향)
         headers = get_common_headers("FHPTJ04040000")
         
+        # 💡 오늘 날짜를 'YYYYMMDD' 형식으로 자동 생성합니다.
+        today_str = datetime.now(KST).strftime('%Y%m%d')
+        
+        # 💡 한투 서버가 요구하는 필수 입력값을 모두 꽉꽉 채워 넣습니다!
         params = {
             "FID_COND_MRKT_DIV_CODE": "U", # U: 코스피 시장 전체
-            "FID_INPUT_ISCD": "0001"       # 0001: 코스피 종합 지수
+            "FID_INPUT_ISCD": "0001",      # 0001: 코스피 종합 지수
+            "FID_INPUT_DATE_1": today_str, # 조회 시작일 (오늘)
+            "FID_INPUT_DATE_2": today_str, # 조회 종료일 (오늘)
+            "FID_PERIOD_DIV_CODE": "D"     # D: 일별 데이터
         }
         
         res = requests.get(url, headers=headers, params=params)
         res_data = res.json()
         
-        # 1. 한투 서버가 정상적으로 데이터를 줬을 때
         if res_data.get('rt_cd') == '0':
-            try:
-                # 데이터 꾸러미(output1 또는 output)에서 오늘자 첫 번째 줄 데이터를 꺼냅니다.
-                data_list = res_data.get('output1') or res_data.get('output')
+            data_list = res_data.get('output1') or res_data.get('output')
+            if data_list:
                 today_data = data_list[0]
                 
-                # 'frgn_ntby_amt' = 외국인 순매수 금액
+                # 'frgn_ntby_amt' = 외국인 순매수 금액 (단위: 억 원)
                 foreign_net_buy = float(today_data.get('frgn_ntby_amt', 0))
                 
                 return foreign_net_buy
-                
-            except Exception as parse_error:
-                # 💡 만약 한투가 주는 데이터의 이름(Key)이 예상과 다르다면, 원본을 화면에 강제로 띄웁니다!
-                st.error(f"⚠️ 데이터 구조가 다릅니다. KIS 원본 확인: {str(res_data)[:300]}")
-                return 0.0
-                
-        # 2. 한투 서버가 데이터를 안 주고 튕겨냈을 때 (🚨 여기가 핵심입니다)
+            return 0.0
+            
         else:
-            # 💡 한투에서 보낸 진짜 에러 메시지를 화면에 띄웁니다! (예: "필수 입력값이 누락되었습니다")
             st.error(f"🚨 한투 API 거절 사유: {res_data.get('msg1')}")
             return 0.0
             
     except Exception as e:
-        st.error(f"⚠️ API 통신 자체 실패: {e}")
+        st.error(f"⚠️ API 통신 실패: {e}")
         return 0.0
 # -----------------------------------------------------------------------------
 # [섹션 1 & 2] 시장 동향 및 수급
