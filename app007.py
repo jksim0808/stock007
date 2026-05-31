@@ -239,9 +239,31 @@ def fetch_after_market_data(top30_df):
     progress_text = "🌙 애프터 마켓(시간외 단일가) 데이터를 불러오는 중입니다..."
     my_bar = st.progress(0, text=progress_text)
     
-    for idx, row in top30_df.iterrows():
+# 💡 enumerate를 추가해서 i(0, 1, 2...)라는 진짜 순서 카운터를 만듭니다!
+    for i, (idx, row) in enumerate(top30_df.iterrows()):
         code = row['종목코드']
         params = {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": code}
+        try:
+            res = requests.get(url, headers=headers, params=params)
+            data = res.json()
+            if data['rt_cd'] == '0' and 'output' in data:
+                after_price = float(data['output'].get('ovtm_untp_prpr', 0))
+                after_ratio = float(data['output'].get('ovtm_untp_prdy_ctrt', 0))
+                after_vol = float(data['output'].get('ovtm_untp_vol', 0))
+                
+                after_market_results.append({
+                    '종목코드': code,
+                    '시간외 현재가': f"{int(after_price):,} 원" if after_price > 0 else "-",
+                    '시간외 등락률': f"{after_ratio:+.2f} %" if after_price > 0 else "-",
+                    '시간외 거래량': f"{int(after_vol):,}" if after_price > 0 else "-",
+                    '_after_ratio_num': after_ratio
+                })
+            time.sleep(0.05) 
+        except Exception as e:
+            after_market_results.append({'종목코드': code, '시간외 현재가': "-", '시간외 등락률': "-", '시간외 거래량': "-", '_after_ratio_num': 0.0})
+        
+        # 💡 idx 대신 i를 사용하여 무조건 1.0을 넘지 않도록 안전하게 수정했습니다.
+        my_bar.progress((i + 1) / len(top30_df), text=progress_text)
         try:
             res = requests.get(url, headers=headers, params=params)
             data = res.json()
