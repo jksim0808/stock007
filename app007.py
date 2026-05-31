@@ -154,14 +154,14 @@ def create_pro_chart(df, title, color_hex):
     return fig
 
 # -----------------------------------------------------------------------------
-# 🌙 애프터 마켓 데이터 수집
+# ☀️ 프리마켓(예상 체결가) 데이터 수집 (안정성 강화 버전)
 # -----------------------------------------------------------------------------
 @st.cache_data(ttl=60, show_spinner=False)
-def fetch_after_market_data(top30_df):
+def fetch_pre_market_data(top30_df):
     url = f"{URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-price"
     headers = get_common_headers("FHKST01010100") 
-    after_market_results = []
-    my_bar = st.progress(0, text="🌙 애프터 마켓(시간외 단일가) 데이터를 불러오는 중입니다...")
+    pre_market_results = []
+    my_bar = st.progress(0, text="☀️ 프리마켓(장전 동시호가) 예상 가격을 불러오는 중입니다...")
     
     for i, (idx, row) in enumerate(top30_df.iterrows()):
         code = row['종목코드']
@@ -169,23 +169,41 @@ def fetch_after_market_data(top30_df):
         try:
             res = requests.get(url, headers=headers, params=params)
             data = res.json()
-            if data['rt_cd'] == '0' and 'output' in data:
-                after_price = float(data['output'].get('ovtm_untp_prpr', 0))
-                after_ratio = float(data['output'].get('ovtm_untp_prdy_ctrt', 0))
-                after_vol = float(data['output'].get('ovtm_untp_vol', 0))
-                after_market_results.append({
+            
+            if data.get('rt_cd') == '0' and 'output' in data:
+                out = data['output']
+                
+                # 💡 안전한 형변환 함수 (빈 문자열이나 None이 들어오면 0.0으로 처리)
+                def safe_float(val):
+                    if val in [None, "", " "]: return 0.0
+                    try: return float(val)
+                    except: return 0.0
+                
+                pre_price = safe_float(out.get('antc_cnpr', 0))
+                pre_ratio = safe_float(out.get('antc_cntg_prdy_ctrt', 0))
+                pre_vol = safe_float(out.get('antc_cntg_vol', 0))
+                
+                pre_market_results.append({
                     '종목코드': code,
-                    '시간외 현재가': f"{int(after_price):,} 원" if after_price > 0 else "-",
-                    '시간외 등락률': f"{after_ratio:+.2f} %" if after_price > 0 else "-",
-                    '시간외 거래량': f"{int(after_vol):,}" if after_price > 0 else "-",
-                    '_sort_ratio_num': after_ratio
+                    '☀️ 예상 체결가': f"{int(pre_price):,} 원" if pre_price > 0 else "-",
+                    '☀️ 예상 갭상승률': f"{pre_ratio:+.2f} %" if pre_price > 0 else "-",
+                    '☀️ 예상 거래량': f"{int(pre_vol):,}" if pre_price > 0 else "-",
+                    '_sort_ratio_num': pre_ratio
                 })
-            time.sleep(0.05) 
-        except Exception:
-            after_market_results.append({'종목코드': code, '시간외 현재가': "-", '시간외 등락률': "-", '시간외 거래량': "-", '_sort_ratio_num': 0.0})
+            else:
+                # API 응답이 정상이 아닌 경우 (초당 제한 등)
+                pre_market_results.append({'종목코드': code, '☀️ 예상 체결가': "-", '☀️ 예상 갭상승률': "-", '☀️ 예상 거래량': "-", '_sort_ratio_num': 0.0})
+            
+            # 💡 API 호출 제한(Rate Limit)을 피하기 위해 딜레이를 0.1초로 넉넉하게 부여
+            time.sleep(0.1) 
+            
+        except Exception as e:
+            pre_market_results.append({'종목코드': code, '☀️ 예상 체결가': "-", '☀️ 예상 갭상승률': "-", '☀️ 예상 거래량': "-", '_sort_ratio_num': 0.0})
+            
         my_bar.progress((i + 1) / len(top30_df))
+        
     my_bar.empty()
-    return pd.DataFrame(after_market_results)
+    return pd.DataFrame(pre_market_results)
 
 # -----------------------------------------------------------------------------
 # ☀️ 프리마켓(예상 체결가) 데이터 수집
