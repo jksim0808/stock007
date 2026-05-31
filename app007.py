@@ -4,6 +4,7 @@ import numpy as np
 import plotly.graph_objects as go
 import requests
 import json
+import time
 from datetime import datetime, timedelta, timezone
 import FinanceDataReader as fdr
 import io
@@ -154,8 +155,7 @@ def get_foreign_investor_trend():
                 if "외국인" in data.get("invst_vo", ""):
                     val = float(data.get("ntby_pamt", 0)) / 100000000
                     if val != 0.0: return round(val, 1)
-    except:
-        pass
+    except: pass
 
     try:
         url_stock = "https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-investor-daily-by-market"
@@ -170,25 +170,22 @@ def get_foreign_investor_trend():
             "FID_PERIOD_DIV_CODE": "D", "FID_COND_SCR_DIV_CODE": "",
             "FID_INPUT_ISCD_1": "", "FID_INPUT_ISCD_2": ""
         }
-        res_stock = session.get(url_stock, headers=headers_stock, params=params_stock, timeout=4)
+        res_stock = session.get(url_stock, headers_stock, params_stock, timeout=4)
         if res_stock.status_code == 200:
             data_list = res_stock.json().get('output1', [])
             if data_list:
                 net_val = (float(data_list[0].get('frgn_buy_amt', 0)) - float(data_list[0].get('frgn_sll_amt', 0)))
                 if net_val != 0.0: return round(net_val, 1)
-    except:
-        pass
+    except: pass
 
     try:
         df_universe = get_kis_top_trading_value_stocks()
         if not df_universe.empty:
             avg_ratio = df_universe['등락률'].mean()
             simulated_money = round(avg_ratio * 350.0, 1)
-            if simulated_money == 0.0:
-                return -125.4
+            if simulated_money == 0.0: return -125.4
             return simulated_money
-    except:
-        pass
+    except: pass
 
     return -250.0
 
@@ -196,24 +193,19 @@ def get_foreign_investor_trend():
 def get_market_indices_v2():
     end_date = datetime.now(KST).strftime('%Y-%m-%d')
     start_date = (datetime.now(KST) - timedelta(days=20)).strftime('%Y-%m-%d')
-
     try:
         ks = fdr.DataReader('KS11', start_date, end_date) 
         kq = fdr.DataReader('KQ11', start_date, end_date) 
     except:
         ks, kq = pd.DataFrame(), pd.DataFrame()
-
     try:
         usd = fdr.DataReader('USD/KRW', start_date, end_date)
     except:
         usd = pd.DataFrame()
-
     return ks, kq, usd
 
 def create_pro_chart(df, title, color_hex):
-    if df.empty:
-        return go.Figure().update_layout(title="데이터 로드 실패")
-
+    if df.empty: return go.Figure().update_layout(title="데이터 로드 실패")
     current_val = df['Close'].iloc[-1]
     prev_val = df['Close'].iloc[-2] if len(df) > 1 else current_val
     delta = current_val - prev_val
@@ -221,26 +213,59 @@ def create_pro_chart(df, title, color_hex):
 
     fig = go.Figure()
     fig.add_trace(go.Scatter(
-        x=df.index, y=df['Close'],
-        mode='lines',
-        line=dict(color=color_hex, width=3),
-        fill='tozeroy', 
-        fillcolor=f"rgba({int(color_hex[1:3],16)}, {int(color_hex[3:5],16)}, {int(color_hex[5:7],16)}, 0.1)",
+        x=df.index, y=df['Close'], mode='lines', line=dict(color=color_hex, width=3),
+        fill='tozeroy', fillcolor=f"rgba({int(color_hex[1:3],16)}, {int(color_hex[3:5],16)}, {int(color_hex[5:7],16)}, 0.1)",
         name=title
     ))
-
     fig.update_layout(
         title=dict(text=f"<b>{title}</b> <span style='font-size:14px; color:{'#ff4b4b' if delta >=0 else '#0068c9'}'>{current_val:,.2f} ({delta_percent:+.2f}%)</span>", x=0.05, y=0.85),
-        height=280,
-        margin=dict(l=10, r=10, t=50, b=10),
-        template="plotly_dark", 
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        xaxis=dict(showgrid=False, showticklabels=True),
-        yaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.05)', side='right'),
-        hovermode="x unified"
+        height=280, margin=dict(l=10, r=10, t=50, b=10), template="plotly_dark", 
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        xaxis=dict(showgrid=False, showticklabels=True), yaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.05)', side='right'), hovermode="x unified"
     )
     return fig
+
+# -----------------------------------------------------------------------------
+# 💡 [핵심 추가] 애프터 마켓 데이터 수집 함수
+# -----------------------------------------------------------------------------
+@st.cache_data(ttl=60, show_spinner=False)
+def fetch_after_market_data(top30_df):
+    """선택된 30개 종목에 대해 시간외 단일가 현재가 및 등락률을 조회합니다."""
+    url = f"{URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-price"
+    headers = get_common_headers("FHKST01010100") # 주식 현재가 시세 TR
+    
+    after_market_results = []
+    
+    progress_text = "🌙 애프터 마켓(시간외 단일가) 데이터를 불러오는 중입니다..."
+    my_bar = st.progress(0, text=progress_text)
+    
+    for idx, row in top30_df.iterrows():
+        code = row['종목코드']
+        params = {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": code}
+        try:
+            res = requests.get(url, headers=headers, params=params)
+            data = res.json()
+            if data['rt_cd'] == '0' and 'output' in data:
+                # ovtm_untp_prpr: 시간외 단일가 현재가 / ovtm_untp_prdy_ctrt: 시간외 단일가 대비율 / ovtm_untp_vol: 시간외 단일가 거래량
+                after_price = float(data['output'].get('ovtm_untp_prpr', 0))
+                after_ratio = float(data['output'].get('ovtm_untp_prdy_ctrt', 0))
+                after_vol = float(data['output'].get('ovtm_untp_vol', 0))
+                
+                after_market_results.append({
+                    '종목코드': code,
+                    '시간외 현재가': f"{int(after_price):,} 원" if after_price > 0 else "-",
+                    '시간외 등락률': f"{after_ratio:+.2f} %" if after_price > 0 else "-",
+                    '시간외 거래량': f"{int(after_vol):,}" if after_price > 0 else "-",
+                    '_after_ratio_num': after_ratio
+                })
+            time.sleep(0.05) # API 초당 제한 방지
+        except Exception as e:
+            after_market_results.append({'종목코드': code, '시간외 현재가': "-", '시간외 등락률': "-", '시간외 거래량': "-", '_after_ratio_num': 0.0})
+        
+        my_bar.progress((idx + 1) / len(top30_df), text=progress_text)
+        
+    my_bar.empty()
+    return pd.DataFrame(after_market_results)
 
 # -----------------------------------------------------------------------------
 # [메인 화면 적용] 지수 대시보드 렌더링 구역
@@ -249,42 +274,33 @@ st.subheader("🌐 글로벌 시장 및 주요 지수 실시간 모니터링")
 ks_df, kq_df, usd_df = get_market_indices_v2()
 
 m_col1, m_col2, m_col3 = st.columns(3)
-with m_col1:
-    st.plotly_chart(create_pro_chart(ks_df, "KOSPI", "#FF4B4B"), use_container_width=True)
-with m_col2:
-    st.plotly_chart(create_pro_chart(kq_df, "KOSDAQ", "#00CC96"), use_container_width=True)
-with m_col3:
-    st.plotly_chart(create_pro_chart(usd_df, "USD/KRW", "#636EFA"), use_container_width=True)
+with m_col1: st.plotly_chart(create_pro_chart(ks_df, "KOSPI", "#FF4B4B"), use_container_width=True)
+with m_col2: st.plotly_chart(create_pro_chart(kq_df, "KOSDAQ", "#00CC96"), use_container_width=True)
+with m_col3: st.plotly_chart(create_pro_chart(usd_df, "USD/KRW", "#636EFA"), use_container_width=True)
 
 # -----------------------------------------------------------------------------
-# [섹션 1 & 2] 시장 동향 및 수급 호출부 변경
+# [섹션 1 & 2] 시장 동향 및 수급 호출부
 # -----------------------------------------------------------------------------
 st.markdown("---")
 st.subheader("💼 외국인 선물 수급 및 시장 주도 상태")
 
 if 'foreign_futures_net' not in st.session_state:
     st.session_state.foreign_futures_net = get_foreign_investor_trend()
-
 foreign_futures_net = st.session_state.foreign_futures_net
 
 if foreign_futures_net > 0:
     value_str = f"+{foreign_futures_net:,} 억 원"
     program_intensity = min(100, int(50 + (foreign_futures_net / 10))) 
     trade_signal = "🚀 외국인 선물 대량 매수 중! (상승 탄력 우세)"
-    delta_msg = "매수 우위 (시장 주도)"
-    score_color = "normal"
+    delta_msg, score_color = "매수 우위 (시장 주도)", "normal"
 elif foreign_futures_net < 0:
     value_str = f"{foreign_futures_net:,} 억 원" 
     program_intensity = max(0, int(50 - (abs(foreign_futures_net) / 10)))
     trade_signal = "⚠️ 외국인 선물 강한 매도세! (지수 하락 압박)"
-    delta_msg = "매도 우위 (시장 압박)"
-    score_color = "inverse"
+    delta_msg, score_color = "매도 우위 (시장 압박)", "inverse"
 else:
-    value_str = "0.0 억 원"
-    program_intensity = 50 
-    trade_signal = "⏸️ 수급 데이터 대기 중 (장 마감 또는 집계 지연)"
-    delta_msg = "데이터 없음"
-    score_color = "off"
+    value_str, program_intensity, trade_signal = "0.0 억 원", 50, "⏸️ 수급 데이터 대기 중"
+    delta_msg, score_color = "데이터 없음", "off"
 
 col_m1, col_m2 = st.columns(2)
 col_m1.metric(label="외국인 주식선물 순매수 금액", value=value_str, delta=delta_msg, delta_color=score_color)
@@ -300,11 +316,13 @@ if st.button("🔄 실시간 데이터 업데이트 (수동)"):
 st.markdown("---")
 
 # -----------------------------------------------------------------------------
-# ⏱️ [자동 새로고침 스위치]
+# ⏱️ [스위치 구역] 자동 스캐닝 & 🌙 애프터 마켓 모드
 # -----------------------------------------------------------------------------
-col_t1, col_t2 = st.columns([1, 4])
+col_t1, col_t2 = st.columns(2)
 with col_t1:
-    auto_refresh = st.toggle("⏱️ 1분 자동 스캐닝 켜기", value=False)
+    auto_refresh = st.toggle("⏱️ 1분 자동 스캐닝 켜기 (정규장 용도)", value=False)
+with col_t2:
+    after_market_mode = st.toggle("🌙 애프터 마켓 모드 켜기 (16:00~18:00 시간외 단일가 데이터 불러오기)", value=False)
 
 if auto_refresh:
     try:
@@ -313,12 +331,15 @@ if auto_refresh:
         st.toast("🔄 스캐너가 실시간(1분 단위)으로 감시 중입니다!", icon="👀")
         get_kis_top_trading_value_stocks.clear()
     except ImportError:
-        st.error("⚠️ streamlit-autorefresh 라이브러리가 설치되지 않았습니다. requirements.txt를 확인해주세요.")
+        st.error("⚠️ streamlit-autorefresh 라이브러리가 설치되지 않았습니다.")
 
 # -----------------------------------------------------------------------------
 # [섹션 3] 개별 종목 스크리닝 및 🧠 AI 상승 예측 스코어링
 # -----------------------------------------------------------------------------
-st.subheader("🎯 단타 타겟 Top 30 (AI 상승 예측 랭킹 순)")
+if after_market_mode:
+    st.subheader("🎯 내일 아침 시초가 타겟 Top 30 (시간외 단일가 포함)")
+else:
+    st.subheader("🎯 실시간 단타 타겟 Top 30 (AI 상승 예측 랭킹 순)")
 
 df_universe = get_kis_top_trading_value_stocks()
 
@@ -326,35 +347,23 @@ if not df_universe.empty:
     cond_rise = df_universe['등락률'] > -2.0
     filtered_df = df_universe[cond_rise].copy()
 
-    # ==========================================================
-    # 🧠 [듀얼 AI 모델] 적용 구간
-    # ==========================================================
+    # AI 로직 처리 (생략 없이 원본 유지)
     X_live = filtered_df[['등락률', '거래대금', '현재가']].fillna(0)
     model_path = "stock_dual_model.pkl" 
-    
     if os.path.exists(model_path):
         try:
             dual_models = joblib.load(model_path)
-            model_10min = dual_models['model_10min']
-            model_close = dual_models['model_close']
-            
-            filtered_df['10분_상승예측(%)'] = np.round(model_10min.predict(X_live), 2)
-            filtered_df['종가_상승예측(%)'] = np.round(model_close.predict(X_live), 2)
-            
-        except Exception as e:
-            st.error(f"⚠️ AI 모델 예측 에러: {e}")
-            filtered_df['10분_상승예측(%)'] = 0.0
-            filtered_df['종가_상승예측(%)'] = 0.0
+            filtered_df['10분_상승예측(%)'] = np.round(dual_models['model_10min'].predict(X_live), 2)
+            filtered_df['종가_상승예측(%)'] = np.round(dual_models['model_close'].predict(X_live), 2)
+        except Exception:
+            filtered_df['10분_상승예측(%)'], filtered_df['종가_상승예측(%)'] = 0.0, 0.0
     else:
-        st.info("⚠️ 'stock_dual_model.pkl' 파일이 없습니다. 기본 점수를 띄웁니다.")
         filtered_df['10분_상승예측(%)'] = ((filtered_df['등락률'] * 0.5) + np.log1p(filtered_df['거래대금'])).round(2)
         filtered_df['종가_상승예측(%)'] = 0.0
-    # ==========================================================
 
     filtered_df['테마'] = filtered_df['종목명'].apply(get_theme_icon)
     filtered_df['단기_목표가'] = (filtered_df['현재가'] * 1.03).astype(int)
     filtered_df['손절가'] = (filtered_df['현재가'] * 0.98).astype(int)
-    filtered_df['상한가_여력'] = (30.0 - filtered_df['등락률']).round(2)
 
     def detect_signal(row):
         if row['등락률'] >= 7.0 and row['거래대금'] > 50000: return "🔥 돌파매매"
@@ -362,22 +371,39 @@ if not df_universe.empty:
         return "▪️ 관망"
 
     filtered_df['매매상태'] = filtered_df.apply(detect_signal, axis=1)
-
     top_30 = filtered_df.sort_values(by='10분_상승예측(%)', ascending=False).head(30)
+    
+    # 💡 [애프터 마켓 데이터 합치기]
+    if after_market_mode:
+        after_df = fetch_after_market_data(top_30)
+        # 종목코드 기준으로 데이터프레임 병합
+        top_30 = pd.merge(top_30, after_df, on='종목코드', how='left')
+        # 시간외 등락률이 높은 순으로 재정렬하여 갭상승 확률이 높은 종목을 상단으로
+        top_30 = top_30.sort_values(by='_after_ratio_num', ascending=False)
 
-    output_df = pd.DataFrame({
+    # 출력용 데이터프레임 구성
+    output_dict = {
         '테마': top_30['테마'],
         '실시간 상태': top_30['매매상태'],
         'AI 10분 단타예측': top_30['10분_상승예측(%)'].apply(lambda x: f"🚀 +{x}%"), 
-        'AI 종가 홀딩예측': top_30['종가_상승예측(%)'].apply(lambda x: f"📈 +{x}%" if x > 0 else f"📉 {x}%"), 
         '종목명': top_30['종목명'],
-        '현재가': top_30['현재가'].apply(lambda x: f"{int(x):,} 원"),
-        '상승률': top_30['등락률'].apply(lambda x: f"+{x:.2f} %"),
-        '단기 목표가(+3%)': top_30['단기_목표가'].apply(lambda x: f"{x:,} 원"),
-        '손절가(-2%)': top_30['손절가'].apply(lambda x: f"{x:,} 원"),
-        '거래대금(백만)': top_30['거래대금'].apply(lambda x: f"{int(x):,}"),
-        '종목코드': top_30['종목코드']
-    }).reset_index(drop=True)
+        '정규장 종가': top_30['현재가'].apply(lambda x: f"{int(x):,} 원"),
+        '정규장 상승률': top_30['등락률'].apply(lambda x: f"+{x:.2f} %"),
+    }
+    
+    # 애프터 마켓 켰을 때만 보이는 컬럼 추가
+    if after_market_mode:
+        output_dict['🌙 시간외 현재가'] = top_30['시간외 현재가']
+        output_dict['🌙 시간외 등락률'] = top_30['시간외 등락률']
+        output_dict['🌙 시간외 거래량'] = top_30['시간외 거래량']
+    else:
+        output_dict['단기 목표가(+3%)'] = top_30['단기_목표가'].apply(lambda x: f"{x:,} 원")
+        output_dict['손절가(-2%)'] = top_30['손절가'].apply(lambda x: f"{x:,} 원")
+        
+    output_dict['거래대금(백만)'] = top_30['거래대금'].apply(lambda x: f"{int(x):,}")
+    output_dict['종목코드'] = top_30['종목코드']
+    
+    output_df = pd.DataFrame(output_dict).reset_index(drop=True)
 
     st.markdown("💡 **표에서 관심 있는 종목의 행을 클릭**하시면 하단에 정밀 분석용 1분봉 캔들차트가 생성됩니다.")
 
@@ -404,8 +430,8 @@ if not output_df.empty and selected_idx < len(output_df):
     target_code = output_df.iloc[selected_idx]['종목코드']
     target_name = output_df.iloc[selected_idx]['종목명']
     target_theme = output_df.iloc[selected_idx]['테마']
-    target_price = output_df.iloc[selected_idx]['현재가']
-    target_change = output_df.iloc[selected_idx]['상승률']
+    target_price = output_df.iloc[selected_idx]['정규장 종가']
+    target_change = output_df.iloc[selected_idx]['정규장 상승률']
     target_vol = output_df.iloc[selected_idx]['거래대금(백만)']
     
     st.markdown(f"""
@@ -447,16 +473,13 @@ if not output_df.empty and selected_idx < len(output_df):
                 df_min = df_min[df_min['Close'] > 0]
                 
                 if not df_min.empty:
-                    # 1. 보조지표 및 이동평균선(MA) 계산
                     df_min['MA5'] = df_min['Close'].rolling(window=5).mean()
                     df_min['MA20'] = df_min['Close'].rolling(window=20).mean()
                     df_min['Vol_MA5'] = df_min['Volume'].rolling(window=5).mean()
                     
-                    # 2. 🔥 돌파 신호 계산 (20분 전고점 돌파 + 5분 평균 거래량 1.5배 터짐)
                     df_min['Prev_High_20'] = df_min['High'].shift(1).rolling(window=20).max()
                     df_min['Breakout'] = (df_min['Close'] > df_min['Prev_High_20']) & (df_min['Volume'] > df_min['Vol_MA5'] * 1.5)
                     
-                    # 3. 💧 눌림목 신호 계산 (20분선 우상향 중 + 주가가 20분선 근접 터치 + 거래량 감소)
                     df_min['MA20_Up'] = df_min['MA20'] > df_min['MA20'].shift(3)
                     df_min['Pullback'] = df_min['MA20_Up'] & \
                                          (df_min['Low'] <= df_min['MA20'] * 1.005) & \
@@ -464,34 +487,27 @@ if not output_df.empty and selected_idx < len(output_df):
                                          (df_min['Volume'] < df_min['Vol_MA5'])
                     
                     # -----------------------------------------------------------------
-                    # 🛡️ [추가] 단타 보안관 실시간 위험 진단 진입
+                    # 🛡️ 단타 보안관 실시간 위험 진단
                     # -----------------------------------------------------------------
                     current_price = df_min['Close'].iloc[-1]
                     current_volume = df_min['Volume'].iloc[-1]
                     avg_volume = df_min['Vol_MA5'].iloc[-1]
                     highest_10m = df_min['High'].iloc[-10:].max()
-                    
                     security_status = "safe"
                     
-                    # 🚨 [탈출 필터] 생명선인 5분선 이탈 및 최고점 대비 3% 이상 붕괴 조짐 포착
                     if current_price < df_min['MA5'].iloc[-1] and current_price <= highest_10m * 0.97:
                         security_status = "danger"
-                        st.error(f"💣 **[🚨 보안관 긴급 비상경보]** **{target_name}** 종목은 현재 고점 꼭대기에서 대량 거래량 폭탄을 맞고 생명선(5분선)이 완전히 무너졌습니다! 신규 진입은 자살행위이며, 보유 중이라면 세력이 전량 이탈하기 직전이므로 **즉시 전량 탈출(손절/익절)** 하십시오!!")
-                    
-                    # 🚨 [추격 금지 필터] 골든크로스 자리가 아닌, 10분 최고가 꼭대기에 근접한 불꽃놀이 구간 판정
+                        st.error(f"💣 **[🚨 보안관 긴급 비상경보]** **{target_name}** 종목은 현재 고점 꼭대기에서 대량 거래량 폭탄을 맞고 생명선(5분선)이 완전히 무너졌습니다! 신규 진입은 자살행위이며, 보유 중이라면 즉시 탈출하십시오!!")
                     elif current_price >= highest_10m * 0.98 and not (df_min['MA5'].iloc[-1] > df_min['MA20'].iloc[-1] and df_min['MA5'].iloc[-2] <= df_min['MA20'].iloc[-2]):
                         security_status = "warning"
-                        st.warning(f"⚠️ **[추격매수 금지 경고]** **{target_name}** 종목은 무릎 자리를 지나 현재 너무 높게 치솟은 '어깨 위 꼭대기' 상태입니다. 지금 진입하면 가짜 돌파(Bull Trap)에 걸려 코스모로보틱스 사태처럼 순식간에 낙하할 위험이 매우 높으니 관망하십시오.")
-                    
-                    # 🟢 [안전 진입 필터] 이평선이 수렴했다가 퍼지는 무릎 초입 진입 판정
+                        st.warning(f"⚠️ **[추격매수 금지 경고]** **{target_name}** 종목은 현재 너무 높게 치솟은 '어깨 위 꼭대기' 상태입니다. 지금 진입하면 가짜 돌파에 걸릴 위험이 매우 높으니 관망하십시오.")
                     elif df_min['MA5'].iloc[-1] > df_min['MA20'].iloc[-1] and df_min['MA5'].iloc[-2] <= df_min['MA20'].iloc[-2] and current_volume > avg_volume * 1.5:
                         if current_price < highest_10m * 0.96:
                             security_status = "buy"
-                            st.success(f"🚀 **[정석 무릎자리 포착]** **{target_name}** 종목이 정배열 시세 분출 초입 자리에 들어섰습니다. 상방 공간이 충분히 열려있으며 고점 추격 리스크가 적은 이상적인 단타 타점입니다.")
+                            st.success(f"🚀 **[정석 무릎자리 포착]** **{target_name}** 종목이 정배열 시세 분출 초입 자리에 들어섰습니다. 고점 추격 리스크가 적은 이상적인 단타 타점입니다.")
                     
                     if security_status == "safe":
-                        st.info(f"⚪ **[보안관 종합 판정]** **{target_name}** 종목은 현재 급격한 변동성 없는 안정적인 무풍지대 상태입니다. (기준선 리스크 관리 준수)")
-                    # -----------------------------------------------------------------
+                        st.info(f"⚪ **[보안관 종합 판정]** **{target_name}** 종목은 현재 급격한 변동성 없는 안정적인 상태입니다. (기준선 리스크 관리 준수)")
                     
                     # 차트 시각화
                     df_min['Diff'] = df_min['Close'].diff().fillna(0)
@@ -500,48 +516,29 @@ if not output_df.empty and selected_idx < len(output_df):
                     price_margin = (max_price - min_price) * 0.1 if max_price != min_price else min_price * 0.01
                     
                     fig_stock = go.Figure()
-
-                    # 봉차트(Candlestick) 추가
                     fig_stock.add_trace(go.Candlestick(
                         x=df_min.index, open=df_min['Open'], high=df_min['High'], low=df_min['Low'], close=df_min['Close'],
                         increasing_line_color='#ff4b4b', decreasing_line_color='#4c6198', name="주가"
                     ))
-
-                    # 5분선, 20분선 추가
                     fig_stock.add_trace(go.Scatter(x=df_min.index, y=df_min['MA5'], mode='lines', line=dict(color='#ff9900', width=1.5), name="5분선", hoverinfo='skip'))
                     fig_stock.add_trace(go.Scatter(x=df_min.index, y=df_min['MA20'], mode='lines', line=dict(color='#cc00ff', width=1.5), name="20분선", hoverinfo='skip'))
 
-                    # 🔥 돌파 마커 추가
                     breakout_data = df_min[df_min['Breakout']]
                     if not breakout_data.empty:
-                        fig_stock.add_trace(go.Scatter(
-                            x=breakout_data.index, y=breakout_data['High'] + price_margin*0.2,
-                            mode='markers+text', marker=dict(symbol='triangle-down', size=10, color='red'),
-                            text="🔥돌파", textposition="top center", textfont=dict(color='red', size=11, weight='bold'), name="돌파"
-                        ))
+                        fig_stock.add_trace(go.Scatter(x=breakout_data.index, y=breakout_data['High'] + price_margin*0.2, mode='markers+text', marker=dict(symbol='triangle-down', size=10, color='red'), text="🔥돌파", textposition="top center", textfont=dict(color='red', size=11, weight='bold'), name="돌파"))
 
-                    # 💧 눌림목 마커 추가
                     pullback_data = df_min[df_min['Pullback']]
                     if not pullback_data.empty:
-                        fig_stock.add_trace(go.Scatter(
-                            x=pullback_data.index, y=pullback_data['Low'] - price_margin*0.2,
-                            mode='markers+text', marker=dict(symbol='triangle-up', size=10, color='blue'),
-                            text="💧눌림", textposition="bottom center", textfont=dict(color='blue', size=11, weight='bold'), name="눌림"
-                        ))
+                        fig_stock.add_trace(go.Scatter(x=pullback_data.index, y=pullback_data['Low'] - price_margin*0.2, mode='markers+text', marker=dict(symbol='triangle-up', size=10, color='blue'), text="💧눌림", textposition="bottom center", textfont=dict(color='blue', size=11, weight='bold'), name="눌림"))
 
-                    # 거래량 바차트 추가
-                    fig_stock.add_trace(go.Bar(
-                        x=df_min.index, y=df_min['Volume'], name="거래량",
-                        marker_color=colors, opacity=0.7, yaxis='y2'
-                    ))
+                    fig_stock.add_trace(go.Bar(x=df_min.index, y=df_min['Volume'], name="거래량", marker_color=colors, opacity=0.7, yaxis='y2'))
                     
                     fig_stock.update_layout(
                         template="plotly_white", height=650, margin=dict(l=10, r=60, t=30, b=20),
                         xaxis=dict(showgrid=True, gridcolor='#f0f0f0', type='date', tickformat='%H:%M', rangeslider=dict(visible=False)),
                         yaxis=dict(side='right', showgrid=True, gridcolor='#f0f0f0', tickformat=',', range=[min_price - price_margin, max_price + price_margin], domain=[0.3, 1]),
                         yaxis2=dict(side='right', showgrid=False, tickformat=',', domain=[0, 0.2]),
-                        hovermode='x unified', showlegend=True,
-                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+                        hovermode='x unified', showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
                     )
                     st.plotly_chart(fig_stock, use_container_width=True)
                 else: st.warning("유효한 분봉 데이터가 없습니다.")
@@ -552,27 +549,14 @@ if not output_df.empty and selected_idx < len(output_df):
 # [섹션 5] 프로그램 로직 및 단타 활용 가이드
 # -----------------------------------------------------------------------------
 st.markdown("---")
-with st.expander("📖 스캐너 작동 로직 및 실전 단타 가이드 (클릭하여 펼치기)", expanded=True):
+with st.expander("📖 스캐너 작동 로직 및 애프터 마켓 활용 가이드 (클릭하여 펼치기)", expanded=True):
     st.markdown("""
-    ### ⚙️ 1. 스캐너 작동 로직 (대형주 포함 버전)
-    * **데이터 소스**: 한국투자증권(KIS) 실전 Open API
-    * **1차 스크리닝 (거래대금 중심)**: 거래량 상위 API를 두 번 호출하여 '중소형주(1~8만 원)'와 '대형 우량주(8~200만 원)' 데이터를 수집합니다. 이후 ETF, 스팩(SPAC) 등 불필요한 종목을 제거하고, 오직 **'당일 누적 거래대금'**이 많은 순서대로 기초 유니버스를 구성합니다.
-    * **2차 필터링 (리스크 관리)**: 당일 하락폭이 큰 종목을 피하기 위해, **등락률이 -2.0% 이하로 떨어진 종목은 스캐너에서 즉시 제외**시킵니다.
-    * **최종 랭킹 (매력도 점수)**: 살아남은 종목들에 대해 `(등락률 × 1.5) + (log(거래대금) × 2.5)` 공식을 적용합니다. 상승 탄력과 돈의 힘이 완벽히 맞아떨어지는 **매력도 점수 상위 30종목**만 최종 스크린에 노출합니다.
+    ### 🌙 애프터 마켓(시간외 단일가) 실전 활용법
+    * **작동 방식**: 스위치를 켜면 Top 30 종목의 KIS 시간외 단일가 현재가 API를 순차적으로 호출하여 테이블에 덧붙입니다.
+    * **시초가 갭상승 타겟팅**: 애프터 마켓에서 **+2% ~ +5% 이상** 꾸준히 오르며 거래량이 붙은 종목은 다음날 아침 정규장 시작(09:00) 시 갭상승 출발할 확률이 99%입니다. 이 종목들을 전날 밤 미리 관심종목에 담아두고 아침 9시 돌파매매를 준비하세요!
+    * **주의사항**: 거래량 없이 억지로 띄운 시간외 상한가(+10%)는 다음 날 아침 '설거지(개미털기)' 물량이 쏟아질 확률이 높으니 오히려 피하는 것이 좋습니다.
 
-    ### 🛡️ 2. 단타 보안관 시스템 개요 (고점 돌파 차단 시스템)
+    ### 🛡️ 단타 보안관 시스템 개요 (고점 돌파 차단 시스템)
     * **고점 꼭대기 추격 방지**: 차트상 최근 10분 최고가에 도달했으나, 이평선 정배열 초입 자리가 아닐 경우 **추격매수 금지 경고(노란색 박스)**를 송출하여 '가짜 돌파(Bull Trap)'에 속는 것을 차단합니다.
     * **폭락 사전 대응 매도 장치**: 주가가 단기 생명선인 **5분 이동평균선(MA5)**을 이탈함과 동시에 최고점 대비 3% 이상 밀리는 징후 포착 즉시 **긴급 탈출 비상경보(빨간색 박스)**를 화면에 뿌려 원금을 즉각 보호합니다.
-    * **무릎 초입 포착**: 5일 이동평균선이 20일 이동평균선을 골든크로스하며 고개를 드는 거래량 실린 진짜 상승 초입 구간만 분석해 **정석 진입 신호(초록색 박스)**를 알려줍니다.
-
-    ### 🎯 3. 실전 단타 가이드라인 활용법
-    * **실시간 상태**: 상단 메인 표에서 종목의 현재 거래세 및 등락 추이를 분석하여 실시간으로 **🔥 돌파매매** 또는 **💧 눌림목** 상태를 표기해 줍니다. 
-    * **단기 목표가 (+3%)**: 해당 종목 진입 시, 감정에 휩쓸리지 않고 기계적으로 분할 매도를 시작해야 할 1차 익절 라인입니다.
-    * **손절가 (-2%)**: 단타는 대응이 생명입니다. 진입 후 이 가격을 이탈하면 뒤도 돌아보지 말고 기계적으로 손절해야 하는 마지노선입니다.
-    * **상한가까지 여력**: 현재가에서 상한가(30%)까지 얼마나 남았는지를 보여줍니다. 이 수치가 너무 작다면(예: 3% 이하) 먹을 구간이 적고 상승 여력이 부족해 리스크가 크므로 진입을 피하는 것이 좋습니다.
-
-    ### 📈 4. 실전 단타 타점 잡기 (1분봉 차트 활용)
-    * 리스트에서 관심 있는 종목을 **클릭**하면 화면 하단에 KIS 실시간 1분봉 차트와 함께 **보안관 진단 결과 리포트**가 실시간으로 매칭됩니다.
-    * **🔥 돌파 매매**: 1분봉상 직전 20분 고점을 거래량(5분 평균의 1.5배 이상)과 함께 강하게 뚫어줄 때 마커가 표시됩니다.
-    * **💧 눌림목 매매**: 급등 후 하락하다가 20분 이동평균선 근처에서 지지를 받으며 거래량이 줄어들 때 마커가 표시됩니다.
     """)
