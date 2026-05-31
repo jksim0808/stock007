@@ -154,7 +154,7 @@ def create_pro_chart(df, title, color_hex):
     return fig
 
 # -----------------------------------------------------------------------------
-# ☀️ 프리마켓(예상 체결가) 데이터 수집 (안정성 강화 버전)
+# ☀️ 프리마켓(예상 체결가) 데이터 수집 (안정성 및 진단 강화 버전)
 # -----------------------------------------------------------------------------
 @st.cache_data(ttl=60, show_spinner=False)
 def fetch_pre_market_data(top30_df):
@@ -163,17 +163,20 @@ def fetch_pre_market_data(top30_df):
     pre_market_results = []
     my_bar = st.progress(0, text="☀️ 프리마켓(장전 동시호가) 예상 가격을 불러오는 중입니다...")
     
+    error_msg_shown = False # 에러 창이 30번 도배되는 것을 막기 위한 스위치
+    
     for i, (idx, row) in enumerate(top30_df.iterrows()):
         code = row['종목코드']
         params = {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": code}
+        
         try:
             res = requests.get(url, headers=headers, params=params)
             data = res.json()
             
+            # API 응답 성공 ('0'은 정상 코드를 의미)
             if data.get('rt_cd') == '0' and 'output' in data:
                 out = data['output']
                 
-                # 💡 안전한 형변환 함수 (빈 문자열이나 None이 들어오면 0.0으로 처리)
                 def safe_float(val):
                     if val in [None, "", " "]: return 0.0
                     try: return float(val)
@@ -185,20 +188,24 @@ def fetch_pre_market_data(top30_df):
                 
                 pre_market_results.append({
                     '종목코드': code,
-                    '☀️ 예상 체결가': f"{int(pre_price):,} 원" if pre_price > 0 else "-",
-                    '☀️ 예상 갭상승률': f"{pre_ratio:+.2f} %" if pre_price > 0 else "-",
-                    '☀️ 예상 거래량': f"{int(pre_vol):,}" if pre_price > 0 else "-",
+                    '☀️ 예상 체결가': f"{int(pre_price):,} 원" if pre_price > 0 else "데이터 없음",
+                    '☀️ 예상 갭상승률': f"{pre_ratio:+.2f} %" if pre_price > 0 else "0.00 %",
+                    '☀️ 예상 거래량': f"{int(pre_vol):,}" if pre_price > 0 else "0",
                     '_sort_ratio_num': pre_ratio
                 })
             else:
-                # API 응답이 정상이 아닌 경우 (초당 제한 등)
-                pre_market_results.append({'종목코드': code, '☀️ 예상 체결가': "-", '☀️ 예상 갭상승률': "-", '☀️ 예상 거래량': "-", '_sort_ratio_num': 0.0})
+                # 💡 API가 정상 응답을 주지 않은 경우, 실제 에러 메시지를 화면에 출력!
+                if not error_msg_shown:
+                    st.warning(f"⚠️ KIS API 서버 응답 거절 사유: {data.get('msg1', '알 수 없는 에러')}")
+                    error_msg_shown = True
+                    
+                pre_market_results.append({'종목코드': code, '☀️ 예상 체결가': "API 차단", '☀️ 예상 갭상승률': "API 차단", '☀️ 예상 거래량': "API 차단", '_sort_ratio_num': 0.0})
             
-            # 💡 API 호출 제한(Rate Limit)을 피하기 위해 딜레이를 0.1초로 넉넉하게 부여
-            time.sleep(0.1) 
+            # 호출 속도를 0.2초로 더 느리게 늦춤 (안정성 극대화)
+            time.sleep(0.2) 
             
         except Exception as e:
-            pre_market_results.append({'종목코드': code, '☀️ 예상 체결가': "-", '☀️ 예상 갭상승률': "-", '☀️ 예상 거래량': "-", '_sort_ratio_num': 0.0})
+            pre_market_results.append({'종목코드': code, '☀️ 예상 체결가': "에러", '☀️ 예상 갭상승률': "에러", '☀️ 예상 거래량': "에러", '_sort_ratio_num': 0.0})
             
         my_bar.progress((i + 1) / len(top30_df))
         
