@@ -211,42 +211,51 @@ def fetch_pre_market_data(top30_df):
         
     my_bar.empty()
     return pd.DataFrame(pre_market_results)
-
 # -----------------------------------------------------------------------------
-# ☀️ 프리마켓(예상 체결가) 데이터 수집
+# 🌙 애프터 마켓(시간외 단일가) 데이터 수집
 # -----------------------------------------------------------------------------
 @st.cache_data(ttl=60, show_spinner=False)
-def fetch_pre_market_data(top30_df):
-    url = f"{URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-price"
+def fetch_after_market_data(top30_df):
+    url = f"{URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice" # 시간외 단일가는 엔드포인트가 다를 수 있으나 현재가 조회 API 재활용 또는 지정 API 사용 필요 (아래는 기본 종가조회 기반 예시)
     headers = get_common_headers("FHKST01010100") 
-    pre_market_results = []
-    my_bar = st.progress(0, text="☀️ 프리마켓(장전 동시호가) 예상 가격을 불러오는 중입니다...")
+    after_market_results = []
+    my_bar = st.progress(0, text="🌙 애프터마켓(시간외 단일가) 데이터를 불러오는 중입니다...")
     
     for i, (idx, row) in enumerate(top30_df.iterrows()):
         code = row['종목코드']
         params = {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": code}
+        
         try:
             res = requests.get(url, headers=headers, params=params)
             data = res.json()
-            if data['rt_cd'] == '0' and 'output' in data:
-                # antc_cnpr: 예상 체결가, antc_cntg_prdy_ctrt: 예상 체결 전일 대비율, antc_cntg_vol: 예상 체결 수량
-                pre_price = float(data['output'].get('antc_cnpr', 0))
-                pre_ratio = float(data['output'].get('antc_cntg_prdy_ctrt', 0))
-                pre_vol = float(data['output'].get('antc_cntg_vol', 0))
+            
+            if data.get('rt_cd') == '0' and 'output' in data:
+                out = data['output']
                 
-                pre_market_results.append({
+                # 시간외 단일가 관련 데이터 매핑 (API 문서 참조 필요)
+                after_price = float(out.get('stck_prpr', 0))
+                after_ratio = float(out.get('prdy_ctrt', 0))
+                after_vol = float(out.get('acml_vol', 0))
+                
+                after_market_results.append({
                     '종목코드': code,
-                    '☀️ 예상 체결가': f"{int(pre_price):,} 원" if pre_price > 0 else "-",
-                    '☀️ 예상 갭상승률': f"{pre_ratio:+.2f} %" if pre_price > 0 else "-",
-                    '☀️ 예상 거래량': f"{int(pre_vol):,}" if pre_price > 0 else "-",
-                    '_sort_ratio_num': pre_ratio
+                    '🌙 시간외 현재가': f"{int(after_price):,} 원" if after_price > 0 else "-",
+                    '🌙 시간외 등락률': f"{after_ratio:+.2f} %" if after_price > 0 else "-",
+                    '🌙 시간외 거래량': f"{int(after_vol):,}" if after_price > 0 else "-",
+                    '_sort_ratio_num': after_ratio
                 })
-            time.sleep(0.05) 
+            else:
+                after_market_results.append({'종목코드': code, '🌙 시간외 현재가': "-", '🌙 시간외 등락률': "-", '🌙 시간외 거래량': "-", '_sort_ratio_num': 0.0})
+            
+            time.sleep(0.2)
+            
         except Exception:
-            pre_market_results.append({'종목코드': code, '☀️ 예상 체결가': "-", '☀️ 예상 갭상승률': "-", '☀️ 예상 거래량': "-", '_sort_ratio_num': 0.0})
+            after_market_results.append({'종목코드': code, '🌙 시간외 현재가': "에러", '🌙 시간외 등락률': "에러", '🌙 시간외 거래량': "에러", '_sort_ratio_num': 0.0})
+            
         my_bar.progress((i + 1) / len(top30_df))
+        
     my_bar.empty()
-    return pd.DataFrame(pre_market_results)
+    return pd.DataFrame(after_market_results)
 
 # -----------------------------------------------------------------------------
 # 메인 화면 렌더링
