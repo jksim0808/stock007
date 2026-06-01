@@ -154,29 +154,71 @@ def create_pro_chart(df, title, color_hex):
     return fig
 
 # -----------------------------------------------------------------------------
-# ☀️ 프리마켓(예상 체결가) 데이터 수집 (안정성 및 진단 강화 버전)
+# 🌙 애프터 마켓 데이터 수집 (철벽 방어 버전)
+# -----------------------------------------------------------------------------
+@st.cache_data(ttl=60, show_spinner=False)
+def fetch_after_market_data(top30_df):
+    if top30_df.empty:
+        return pd.DataFrame(columns=['종목코드', '시간외 현재가', '시간외 등락률', '시간외 거래량', '_sort_ratio_num'])
+        
+    url = f"{URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-price"
+    headers = get_common_headers("FHKST01010100") 
+    after_market_results = []
+    my_bar = st.progress(0, text="🌙 애프터 마켓(시간외 단일가) 데이터를 불러오는 중입니다...")
+    
+    for i, (idx, row) in enumerate(top30_df.iterrows()):
+        code = row['종목코드']
+        params = {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": code}
+        try:
+            res = requests.get(url, headers=headers, params=params)
+            data = res.json()
+            if data.get('rt_cd') == '0' and 'output' in data:
+                after_price = float(data['output'].get('ovtm_untp_prpr', 0))
+                after_ratio = float(data['output'].get('ovtm_untp_prdy_ctrt', 0))
+                after_vol = float(data['output'].get('ovtm_untp_vol', 0))
+                after_market_results.append({
+                    '종목코드': code,
+                    '시간외 현재가': f"{int(after_price):,} 원" if after_price > 0 else "-",
+                    '시간외 등락률': f"{after_ratio:+.2f} %" if after_price > 0 else "-",
+                    '시간외 거래량': f"{int(after_vol):,}" if after_price > 0 else "-",
+                    '_sort_ratio_num': after_ratio
+                })
+            time.sleep(0.1) 
+        except Exception:
+            after_market_results.append({'종목코드': code, '시간외 현재가': "-", '시간외 등락률': "-", '시간외 거래량': "-", '_sort_ratio_num': 0.0})
+        my_bar.progress((i + 1) / len(top30_df))
+    my_bar.empty()
+    
+    df = pd.DataFrame(after_market_results)
+    # 💡 [핵심] 표가 비었을 때 합치기 오류가 나지 않도록 빈 열(Column) 강제 생성
+    if df.empty:
+        df = pd.DataFrame(columns=['종목코드', '시간외 현재가', '시간외 등락률', '시간외 거래량', '_sort_ratio_num'])
+    return df
+
+# -----------------------------------------------------------------------------
+# ☀️ 프리마켓(예상 체결가) 데이터 수집 (철벽 방어 및 진단 버전)
 # -----------------------------------------------------------------------------
 @st.cache_data(ttl=60, show_spinner=False)
 def fetch_pre_market_data(top30_df):
+    if top30_df.empty:
+        return pd.DataFrame(columns=['종목코드', '☀️ 예상 체결가', '☀️ 예상 갭상승률', '☀️ 예상 거래량', '_sort_ratio_num'])
+        
     url = f"{URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-price"
     headers = get_common_headers("FHKST01010100") 
     pre_market_results = []
     my_bar = st.progress(0, text="☀️ 프리마켓(장전 동시호가) 예상 가격을 불러오는 중입니다...")
     
-    error_msg_shown = False # 에러 창이 30번 도배되는 것을 막기 위한 스위치
+    error_msg_shown = False 
     
     for i, (idx, row) in enumerate(top30_df.iterrows()):
         code = row['종목코드']
         params = {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": code}
-        
         try:
             res = requests.get(url, headers=headers, params=params)
             data = res.json()
             
-            # API 응답 성공 ('0'은 정상 코드를 의미)
             if data.get('rt_cd') == '0' and 'output' in data:
                 out = data['output']
-                
                 def safe_float(val):
                     if val in [None, "", " "]: return 0.0
                     try: return float(val)
@@ -194,69 +236,24 @@ def fetch_pre_market_data(top30_df):
                     '_sort_ratio_num': pre_ratio
                 })
             else:
-                # 💡 API가 정상 응답을 주지 않은 경우, 실제 에러 메시지를 화면에 출력!
                 if not error_msg_shown:
                     st.warning(f"⚠️ KIS API 서버 응답 거절 사유: {data.get('msg1', '알 수 없는 에러')}")
                     error_msg_shown = True
-                    
                 pre_market_results.append({'종목코드': code, '☀️ 예상 체결가': "API 차단", '☀️ 예상 갭상승률': "API 차단", '☀️ 예상 거래량': "API 차단", '_sort_ratio_num': 0.0})
             
-            # 호출 속도를 0.2초로 더 느리게 늦춤 (안정성 극대화)
             time.sleep(0.2) 
-            
         except Exception as e:
             pre_market_results.append({'종목코드': code, '☀️ 예상 체결가': "에러", '☀️ 예상 갭상승률': "에러", '☀️ 예상 거래량': "에러", '_sort_ratio_num': 0.0})
             
         my_bar.progress((i + 1) / len(top30_df))
         
     my_bar.empty()
-    return pd.DataFrame(pre_market_results)
-# -----------------------------------------------------------------------------
-# 🌙 애프터 마켓(시간외 단일가) 데이터 수집
-# -----------------------------------------------------------------------------
-@st.cache_data(ttl=60, show_spinner=False)
-def fetch_after_market_data(top30_df):
-    url = f"{URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice" # 시간외 단일가는 엔드포인트가 다를 수 있으나 현재가 조회 API 재활용 또는 지정 API 사용 필요 (아래는 기본 종가조회 기반 예시)
-    headers = get_common_headers("FHKST01010100") 
-    after_market_results = []
-    my_bar = st.progress(0, text="🌙 애프터마켓(시간외 단일가) 데이터를 불러오는 중입니다...")
     
-    for i, (idx, row) in enumerate(top30_df.iterrows()):
-        code = row['종목코드']
-        params = {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": code}
-        
-        try:
-            res = requests.get(url, headers=headers, params=params)
-            data = res.json()
-            
-            if data.get('rt_cd') == '0' and 'output' in data:
-                out = data['output']
-                
-                # 시간외 단일가 관련 데이터 매핑 (API 문서 참조 필요)
-                after_price = float(out.get('stck_prpr', 0))
-                after_ratio = float(out.get('prdy_ctrt', 0))
-                after_vol = float(out.get('acml_vol', 0))
-                
-                after_market_results.append({
-                    '종목코드': code,
-                    '🌙 시간외 현재가': f"{int(after_price):,} 원" if after_price > 0 else "-",
-                    '🌙 시간외 등락률': f"{after_ratio:+.2f} %" if after_price > 0 else "-",
-                    '🌙 시간외 거래량': f"{int(after_vol):,}" if after_price > 0 else "-",
-                    '_sort_ratio_num': after_ratio
-                })
-            else:
-                after_market_results.append({'종목코드': code, '🌙 시간외 현재가': "-", '🌙 시간외 등락률': "-", '🌙 시간외 거래량': "-", '_sort_ratio_num': 0.0})
-            
-            time.sleep(0.2)
-            
-        except Exception:
-            after_market_results.append({'종목코드': code, '🌙 시간외 현재가': "에러", '🌙 시간외 등락률': "에러", '🌙 시간외 거래량': "에러", '_sort_ratio_num': 0.0})
-            
-        my_bar.progress((i + 1) / len(top30_df))
-        
-    my_bar.empty()
-    return pd.DataFrame(after_market_results)
-
+    df = pd.DataFrame(pre_market_results)
+    # 💡 [핵심] 표가 비었을 때 합치기 오류가 나지 않도록 빈 열(Column) 강제 생성
+    if df.empty:
+        df = pd.DataFrame(columns=['종목코드', '☀️ 예상 체결가', '☀️ 예상 갭상승률', '☀️ 예상 거래량', '_sort_ratio_num'])
+    return df
 # -----------------------------------------------------------------------------
 # 메인 화면 렌더링
 # -----------------------------------------------------------------------------
