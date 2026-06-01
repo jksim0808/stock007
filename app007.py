@@ -5,7 +5,7 @@ import plotly.graph_objects as go
 import requests
 import json
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, time as dt_time
 import FinanceDataReader as fdr
 import io
 from bs4 import BeautifulSoup
@@ -158,9 +158,7 @@ def create_pro_chart(df, title, color_hex):
 # -----------------------------------------------------------------------------
 @st.cache_data(ttl=60, show_spinner=False)
 def fetch_after_market_data(top30_df):
-    if top30_df.empty:
-        return pd.DataFrame(columns=['종목코드', '시간외 현재가', '시간외 등락률', '시간외 거래량', '_sort_ratio_num'])
-        
+    if top30_df.empty: return pd.DataFrame(columns=['종목코드', '시간외 현재가', '시간외 등락률', '시간외 거래량', '_sort_ratio_num'])
     url = f"{URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-price"
     headers = get_common_headers("FHKST01010100") 
     after_market_results = []
@@ -177,38 +175,28 @@ def fetch_after_market_data(top30_df):
                 after_ratio = float(data['output'].get('ovtm_untp_prdy_ctrt', 0))
                 after_vol = float(data['output'].get('ovtm_untp_vol', 0))
                 after_market_results.append({
-                    '종목코드': code,
-                    '시간외 현재가': f"{int(after_price):,} 원" if after_price > 0 else "-",
+                    '종목코드': code, '시간외 현재가': f"{int(after_price):,} 원" if after_price > 0 else "-",
                     '시간외 등락률': f"{after_ratio:+.2f} %" if after_price > 0 else "-",
-                    '시간외 거래량': f"{int(after_vol):,}" if after_price > 0 else "-",
-                    '_sort_ratio_num': after_ratio
+                    '시간외 거래량': f"{int(after_vol):,}" if after_price > 0 else "-", '_sort_ratio_num': after_ratio
                 })
             time.sleep(0.1) 
-        except Exception:
-            after_market_results.append({'종목코드': code, '시간외 현재가': "-", '시간외 등락률': "-", '시간외 거래량': "-", '_sort_ratio_num': 0.0})
+        except: after_market_results.append({'종목코드': code, '시간외 현재가': "-", '시간외 등락률': "-", '시간외 거래량': "-", '_sort_ratio_num': 0.0})
         my_bar.progress((i + 1) / len(top30_df))
     my_bar.empty()
-    
     df = pd.DataFrame(after_market_results)
-    # 💡 [핵심] 표가 비었을 때 합치기 오류가 나지 않도록 빈 열(Column) 강제 생성
-    if df.empty:
-        df = pd.DataFrame(columns=['종목코드', '시간외 현재가', '시간외 등락률', '시간외 거래량', '_sort_ratio_num'])
+    if df.empty: df = pd.DataFrame(columns=['종목코드', '시간외 현재가', '시간외 등락률', '시간외 거래량', '_sort_ratio_num'])
     return df
 
 # -----------------------------------------------------------------------------
-# ☀️ 프리마켓(예상 체결가) 데이터 수집 (철벽 방어 및 진단 버전)
+# ☀️ 프리마켓(예상 체결가) 데이터 수집 (철벽 방어 버전)
 # -----------------------------------------------------------------------------
 @st.cache_data(ttl=60, show_spinner=False)
 def fetch_pre_market_data(top30_df):
-    if top30_df.empty:
-        return pd.DataFrame(columns=['종목코드', '☀️ 예상 체결가', '☀️ 예상 갭상승률', '☀️ 예상 거래량', '_sort_ratio_num'])
-        
+    if top30_df.empty: return pd.DataFrame(columns=['종목코드', '☀️ 예상 체결가', '☀️ 예상 갭상승률', '☀️ 예상 거래량', '_sort_ratio_num'])
     url = f"{URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-price"
     headers = get_common_headers("FHKST01010100") 
     pre_market_results = []
     my_bar = st.progress(0, text="☀️ 프리마켓(장전 동시호가) 예상 가격을 불러오는 중입니다...")
-    
-    error_msg_shown = False 
     
     for i, (idx, row) in enumerate(top30_df.iterrows()):
         code = row['종목코드']
@@ -216,44 +204,26 @@ def fetch_pre_market_data(top30_df):
         try:
             res = requests.get(url, headers=headers, params=params)
             data = res.json()
-            
             if data.get('rt_cd') == '0' and 'output' in data:
                 out = data['output']
                 def safe_float(val):
                     if val in [None, "", " "]: return 0.0
                     try: return float(val)
                     except: return 0.0
-                
-                pre_price = safe_float(out.get('antc_cnpr', 0))
-                pre_ratio = safe_float(out.get('antc_cntg_prdy_ctrt', 0))
-                pre_vol = safe_float(out.get('antc_cntg_vol', 0))
-                
+                pre_price, pre_ratio, pre_vol = safe_float(out.get('antc_cnpr', 0)), safe_float(out.get('antc_cntg_prdy_ctrt', 0)), safe_float(out.get('antc_cntg_vol', 0))
                 pre_market_results.append({
-                    '종목코드': code,
-                    '☀️ 예상 체결가': f"{int(pre_price):,} 원" if pre_price > 0 else "데이터 없음",
+                    '종목코드': code, '☀️ 예상 체결가': f"{int(pre_price):,} 원" if pre_price > 0 else "데이터 없음",
                     '☀️ 예상 갭상승률': f"{pre_ratio:+.2f} %" if pre_price > 0 else "0.00 %",
-                    '☀️ 예상 거래량': f"{int(pre_vol):,}" if pre_price > 0 else "0",
-                    '_sort_ratio_num': pre_ratio
+                    '☀️ 예상 거래량': f"{int(pre_vol):,}" if pre_price > 0 else "0", '_sort_ratio_num': pre_ratio
                 })
-            else:
-                if not error_msg_shown:
-                    st.warning(f"⚠️ KIS API 서버 응답 거절 사유: {data.get('msg1', '알 수 없는 에러')}")
-                    error_msg_shown = True
-                pre_market_results.append({'종목코드': code, '☀️ 예상 체결가': "API 차단", '☀️ 예상 갭상승률': "API 차단", '☀️ 예상 거래량': "API 차단", '_sort_ratio_num': 0.0})
-            
             time.sleep(0.2) 
-        except Exception as e:
-            pre_market_results.append({'종목코드': code, '☀️ 예상 체결가': "에러", '☀️ 예상 갭상승률': "에러", '☀️ 예상 거래량': "에러", '_sort_ratio_num': 0.0})
-            
+        except: pre_market_results.append({'종목코드': code, '☀️ 예상 체결가': "에러", '☀️ 예상 갭상승률': "에러", '☀️ 예상 거래량': "에러", '_sort_ratio_num': 0.0})
         my_bar.progress((i + 1) / len(top30_df))
-        
     my_bar.empty()
-    
     df = pd.DataFrame(pre_market_results)
-    # 💡 [핵심] 표가 비었을 때 합치기 오류가 나지 않도록 빈 열(Column) 강제 생성
-    if df.empty:
-        df = pd.DataFrame(columns=['종목코드', '☀️ 예상 체결가', '☀️ 예상 갭상승률', '☀️ 예상 거래량', '_sort_ratio_num'])
+    if df.empty: df = pd.DataFrame(columns=['종목코드', '☀️ 예상 체결가', '☀️ 예상 갭상승률', '☀️ 예상 거래량', '_sort_ratio_num'])
     return df
+
 # -----------------------------------------------------------------------------
 # 메인 화면 렌더링
 # -----------------------------------------------------------------------------
@@ -292,12 +262,43 @@ if st.button("🔄 실시간 데이터 업데이트 (수동)"):
 st.markdown("---")
 
 # -----------------------------------------------------------------------------
-# ⏱️ [스위치 구역] 자동 스캐닝 & ☀️ 프리마켓 & 🌙 애프터 마켓
+# 🤖 [핵심 로직] 시간에 따른 스위치 자동화 (오토 파일럿)
 # -----------------------------------------------------------------------------
+now_time = datetime.now(KST).time()
+
+# 시간대 정의
+time_pre_start = dt_time(8, 30)
+time_reg_start = dt_time(9, 0)
+time_after_start = dt_time(15, 30)
+time_after_end = dt_time(18, 0)
+
+# 기본 상태값 설정 (장 마감 상태를 기본으로)
+default_auto = False
+default_pre = False
+default_after = True
+
+if time_pre_start <= now_time < time_reg_start:
+    # 08:30 ~ 08:59 (프리마켓)
+    default_auto = True
+    default_pre = True
+    default_after = False
+elif time_reg_start <= now_time < time_after_start:
+    # 09:00 ~ 15:29 (정규장)
+    default_auto = True
+    default_pre = False
+    default_after = False
+elif time_after_start <= now_time < time_after_end:
+    # 15:30 ~ 17:59 (애프터 마켓)
+    default_auto = True
+    default_pre = False
+    default_after = True
+
+st.info("🤖 **오토 파일럿 작동 중:** 현재 시각에 맞춰 최적의 모드(프리마켓/정규장/애프터마켓)가 자동으로 켜집니다. (원하시면 수동으로 조작도 가능합니다.)")
+
 col_t1, col_t2, col_t3 = st.columns(3)
-with col_t1: auto_refresh = st.toggle("⏱️ 1분 자동 스캐닝 켜기 (정규장 실시간)", value=False)
-with col_t2: pre_market_mode = st.toggle("☀️ 프리마켓 (08:30~09:00 동시호가 갭상승)", value=False)
-with col_t3: after_market_mode = st.toggle("🌙 애프터 마켓 (16:00~18:00 시간외 단일가)", value=False)
+with col_t1: auto_refresh = st.toggle("⏱️ 1분 자동 스캐닝 켜기", value=default_auto)
+with col_t2: pre_market_mode = st.toggle("☀️ 프리마켓 (08:30~09:00 동시호가 갭상승)", value=default_pre)
+with col_t3: after_market_mode = st.toggle("🌙 애프터 마켓 (15:30~18:00 시간외 단일가)", value=default_after)
 
 if auto_refresh:
     try:
@@ -308,19 +309,14 @@ if auto_refresh:
     except ImportError: pass
 
 if pre_market_mode: st.subheader("🎯 오늘 아침 시초가 타겟 Top 30 (장전 예상 갭상승)")
-elif after_market_mode: st.subheader("🎯 내일 아침 시초가 타겟 Top 30 (시간외 단일가 포함)")
+elif after_market_mode: st.subheader("🎯 시간외 단일가 및 내일 시초가 타겟 Top 30")
 else: st.subheader("🎯 실시간 단타 타겟 Top 30 (AI 상승 예측 랭킹 순)")
 
 df_universe = get_kis_top_trading_value_stocks()
 
 if not df_universe.empty:
-# 💡 [핵심 수정] 3가지 조건을 모두 통과한 찐 우량 종목만 필터링!
-    filtered_df = df_universe[
-        (df_universe['등락률'] > -2.0) &     # 조건 1: 하락폭이 너무 크지 않은 것
-        (df_universe['등락률'] < 29.5) &     # 조건 2: 상한가(+30%) 도달 안 한 것
-        (df_universe['거래대금'] >= 10000)   # 👈 조건 3: 거래대금 100억 이상! (방금 추가된 부분)
-    ].copy()
-    
+    filtered_df = df_universe[df_universe['등락률'] > -2.0].copy()
+
     X_live = filtered_df[['등락률', '거래대금', '현재가']].fillna(0)
     model_path = "stock_dual_model.pkl" 
     if os.path.exists(model_path):
@@ -342,7 +338,6 @@ if not df_universe.empty:
     
     top_30 = filtered_df.sort_values(by='10분_상승예측(%)', ascending=False).head(30)
     
-    # 💡 [프리마켓/애프터마켓 데이터 합치기]
     if pre_market_mode:
         extra_df = fetch_pre_market_data(top_30)
         top_30 = pd.merge(top_30, extra_df, on='종목코드', how='left').sort_values(by='_sort_ratio_num', ascending=False)
@@ -382,7 +377,7 @@ else:
     output_df = pd.DataFrame()
 
 # -----------------------------------------------------------------------------
-# 종목 클릭 시 차트 및 보안관 연동 (이전과 동일하게 유지)
+# 종목 클릭 시 차트 및 보안관 연동
 # -----------------------------------------------------------------------------
 st.markdown("---")
 selected_idx = selected_rows.selection.rows[0] if (hasattr(selected_rows, 'selection') and len(selected_rows.selection.rows) > 0) else 0
