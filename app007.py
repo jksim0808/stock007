@@ -317,7 +317,8 @@ else: st.subheader("🎯 실시간 단타 타겟 Top 30 (AI 상승 예측 랭킹
 df_universe = get_kis_top_trading_value_stocks()
 
 if not df_universe.empty:
-    filtered_df = df_universe[df_universe['등락률'] > -2.0].copy()
+    # 💡 [핵심 수정] 등락률이 -2.0% 초과이면서, 29.5% 미만인 종목만 필터링 (상한가 근접/도달 종목 아예 제외)
+    filtered_df = df_universe[(df_universe['등락률'] > -2.0) & (df_universe['등락률'] < 29.5)].copy()
 
     X_live = filtered_df[['등락률', '거래대금', '현재가']].fillna(0)
     model_path = "stock_dual_model.pkl" 
