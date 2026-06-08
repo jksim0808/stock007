@@ -133,7 +133,7 @@ def get_foreign_investor_trend():
             "tr_id": "FHKST01010900" 
         }
         
-        # ⚠️ 수정된 부분: 업종(U) 대신 주식(J)으로, 종목코드는 KODEX 200(069500)으로 설정
+        # KODEX 200(069500)을 통해 코스피 전체 외국인 수급의 방향성을 대리 측정
         params = {
             "FID_COND_MRKT_DIV_CODE": "J", 
             "FID_INPUT_ISCD": "069500" 
@@ -145,10 +145,16 @@ def get_foreign_investor_trend():
             data_json = res.json()
             if data_json.get("rt_cd") == "0":
                 for data in data_json.get("output", []):
-                    # 9000 = 외국인
+                    # 9000 = 외국인 투자자
                     if data.get("prsn_clsf_cd") == "9000": 
-                        val = float(data.get("prss_excu_pamt", 0)) / 100000000 
-                        return round(val, 1)
+                        # 매수 거래대금과 매도 거래대금을 각각 가져옵니다.
+                        buy_amt = float(data.get("shnu_tr_pbmn", 0))  # 매수 대금
+                        sell_amt = float(data.get("seln_tr_pbmn", 0)) # 매도 대금
+                        
+                        # 요청하신 로직: 매수 - 매도 (매도가 더 많으면 자연스럽게 음수(-)가 됨)
+                        net_buy = (buy_amt - sell_amt) / 100000000 
+                        
+                        return round(net_buy, 1)
             else:
                 st.warning(f"⚠️ API 응답 에러: {data_json.get('msg1')}")
         else:
