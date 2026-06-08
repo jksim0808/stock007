@@ -122,17 +122,42 @@ def get_foreign_investor_trend():
     session = requests.Session()
     token = get_access_token()
     if not token: return 0.0
+    
     try:
-        url_fut = "https://openapivts.koreainvestment.com:29443/uapi/domestic-future/v1/quotation/inquire-investor-trend"
-        headers_fut = {"content-type": "application/json", "authorization": f"Bearer {token}", "appkey": APP_KEY, "appsecret": APP_SECRET, "tr_id": "FHUFT01010000"}
+        # 1. URL_BASE를 사용하여 실전/모의투자 도메인 통일
+        url_fut = f"{URL_BASE}/uapi/domestic-future/v1/quotation/inquire-investor-trend"
+        headers_fut = {
+            "content-type": "application/json", 
+            "authorization": f"Bearer {token}", 
+            "appkey": APP_KEY, 
+            "appsecret": APP_SECRET, 
+            "tr_id": "FHUFT01010000"
+        }
+        
         res = session.get(url_fut, headers=headers_fut, params={"FID_COND_MRKT_DIV_CODE": "F", "FID_INPUT_ISCD": "000"}, timeout=4)
+        
+        # 2. 상태 코드가 200 정상일 때만 파싱
         if res.status_code == 200:
-            for data in res.json().get("output1", []):
-                if "외국인" in data.get("invst_vo", ""):
-                    val = float(data.get("ntby_pamt", 0)) / 100000000
-                    if val != 0.0: return round(val, 1)
-    except: pass
-    return -250.0
+            data_json = res.json()
+            
+            # KIS API 응답 코드가 '0'(성공)인지 확인
+            if data_json.get("rt_cd") == "0":
+                for data in data_json.get("output1", []):
+                    if "외국인" in data.get("invst_vo", ""):
+                        val = float(data.get("ntby_pamt", 0)) / 100000000
+                        if val != 0.0: 
+                            return round(val, 1)
+            else:
+                # API 자체에서 에러 메시지를 뱉을 경우 화면에 표시
+                st.warning(f"⚠️ 수급 데이터 API 에러: {data_json.get('msg1')}")
+        else:
+            st.warning(f"⚠️ HTTP 통신 에러: {res.status_code}")
+            
+    except Exception as e:
+        # 타임아웃 등의 시스템 에러 표시
+        st.error(f"⚠️ 수급 데이터 수신 중 오류 발생: {e}")
+        
+    return 0.0  # 에러 발생 시 기본값을 0.0으로 반환 (원래 -250.0이었으나 혼선 방지)
 
 @st.cache_data(ttl=60)
 def get_market_indices_v2():
