@@ -124,20 +124,19 @@ def get_foreign_investor_trend():
     if not token: return 0.0
     
     try:
-        # 국내 주식 투자자별 동향 API로 변경 (선물 권한 불필요)
         url_stock = f"{URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-investor"
         headers_stock = {
             "content-type": "application/json", 
             "authorization": f"Bearer {token}", 
             "appkey": APP_KEY, 
             "appsecret": APP_SECRET, 
-            "tr_id": "FHKST01010900" # 주식 투자자 동향 TR Code
+            "tr_id": "FHKST01010900" 
         }
         
-        # FID_COND_MRKT_DIV_CODE: U (업종), FID_INPUT_ISCD: 0001 (코스피 종합)
+        # ⚠️ 수정된 부분: 업종(U) 대신 주식(J)으로, 종목코드는 KODEX 200(069500)으로 설정
         params = {
-            "FID_COND_MRKT_DIV_CODE": "U", 
-            "FID_INPUT_ISCD": "0001"
+            "FID_COND_MRKT_DIV_CODE": "J", 
+            "FID_INPUT_ISCD": "069500" 
         }
         
         res = session.get(url_stock, headers=headers_stock, params=params, timeout=4)
@@ -145,14 +144,13 @@ def get_foreign_investor_trend():
         if res.status_code == 200:
             data_json = res.json()
             if data_json.get("rt_cd") == "0":
-                # output 리스트에서 외국인(9000) 항목 찾기
                 for data in data_json.get("output", []):
-                    # prss_excu_pamt (순매수 거래대금)
-                    if data.get("prsn_clsf_cd") == "9000": # 9000이 외국인 코드
-                        val = float(data.get("prss_excu_pamt", 0)) / 100000000 # 억 단위 변환
+                    # 9000 = 외국인
+                    if data.get("prsn_clsf_cd") == "9000": 
+                        val = float(data.get("prss_excu_pamt", 0)) / 100000000 
                         return round(val, 1)
             else:
-                st.warning(f"⚠️ 주식 수급 API 응답 에러: {data_json.get('msg1')}")
+                st.warning(f"⚠️ API 응답 에러: {data_json.get('msg1')}")
         else:
             st.warning(f"⚠️ HTTP 통신 에러: {res.status_code}")
             
