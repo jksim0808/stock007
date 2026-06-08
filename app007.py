@@ -124,32 +124,37 @@ def get_foreign_investor_trend():
     if not token: return 0.0
     
     try:
-        # 경로를 quotation -> quotations 로 수정
-        url_fut = f"{URL_BASE}/uapi/domestic-future/v1/quotations/inquire-investor-trend"
-        headers_fut = {
+        # 국내 주식 투자자별 동향 API로 변경 (선물 권한 불필요)
+        url_stock = f"{URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-investor"
+        headers_stock = {
             "content-type": "application/json", 
             "authorization": f"Bearer {token}", 
             "appkey": APP_KEY, 
             "appsecret": APP_SECRET, 
-            "tr_id": "FHUFT01010000"
+            "tr_id": "FHKST01010900" # 주식 투자자 동향 TR Code
         }
         
-        res = session.get(url_fut, headers=headers_fut, params={"FID_COND_MRKT_DIV_CODE": "F", "FID_INPUT_ISCD": "000"}, timeout=4)
+        # FID_COND_MRKT_DIV_CODE: U (업종), FID_INPUT_ISCD: 0001 (코스피 종합)
+        params = {
+            "FID_COND_MRKT_DIV_CODE": "U", 
+            "FID_INPUT_ISCD": "0001"
+        }
+        
+        res = session.get(url_stock, headers=headers_stock, params=params, timeout=4)
         
         if res.status_code == 200:
             data_json = res.json()
-            
             if data_json.get("rt_cd") == "0":
-                for data in data_json.get("output1", []):
-                    if "외국인" in data.get("invst_vo", ""):
-                        val = float(data.get("ntby_pamt", 0)) / 100000000
-                        if val != 0.0: 
-                            return round(val, 1)
+                # output 리스트에서 외국인(9000) 항목 찾기
+                for data in data_json.get("output", []):
+                    # prss_excu_pamt (순매수 거래대금)
+                    if data.get("prsn_clsf_cd") == "9000": # 9000이 외국인 코드
+                        val = float(data.get("prss_excu_pamt", 0)) / 100000000 # 억 단위 변환
+                        return round(val, 1)
             else:
-                st.warning(f"⚠️ 수급 데이터 API 응답 에러: {data_json.get('msg1')}")
+                st.warning(f"⚠️ 주식 수급 API 응답 에러: {data_json.get('msg1')}")
         else:
-            # 상태 코드가 200이 아닐 경우 (예: 404, 403 등) 상세 내용 출력
-            st.warning(f"⚠️ HTTP 통신 에러: {res.status_code} - API 주소나 선물 조회 권한을 확인해주세요.")
+            st.warning(f"⚠️ HTTP 통신 에러: {res.status_code}")
             
     except Exception as e:
         st.error(f"⚠️ 수급 데이터 수신 중 오류 발생: {e}")
