@@ -119,59 +119,30 @@ def get_kis_top_trading_value_stocks():
 
 @st.cache_data(ttl=15)
 def get_foreign_investor_trend():
-    session = requests.Session()
-    token = get_access_token()
-    if not token: return 0.0
-    
     try:
-        url_stock = f"{URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-investor"
-        headers_stock = {
-            "content-type": "application/json", 
-            "authorization": f"Bearer {token}", 
-            "appkey": APP_KEY, 
-            "appsecret": APP_SECRET, 
-            "tr_id": "FHKST01010900" 
-        }
+        # KIS API의 장 마감 집계 지연 문제를 회피하기 위해 
+        # 네이버 금융 코스피 종합 차트 페이지에서 실시간 외국인 수급을 스크래핑합니다.
+        url = "https://finance.naver.com/sise/sise_index.naver?code=KOSPI"
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
         
-        # KODEX 200 (069500)
-        params = {
-            "FID_COND_MRKT_DIV_CODE": "J", 
-            "FID_INPUT_ISCD": "069500" 
-        }
+        res = requests.get(url, headers=headers, timeout=5)
+        soup = BeautifulSoup(res.text, 'html.parser')
         
-        res = session.get(url_stock, headers=headers_stock, params=params, timeout=4)
-        
-        if res.status_code == 200:
-            data_json = res.json()
-            if data_json.get("rt_cd") == "0":
-                outputs = data_json.get("output", [])
-                if outputs:
-                    today_data = outputs[0]
-                    
-                    # 🛡️ 빈 문자열("") 및 예기치 않은 문자를 방어하는 함수 도입
-                    def safe_float(val):
-                        if val in [None, "", " "]: return 0.0
-                        try: return float(val)
-                        except: return 0.0
-                    
-                    # 1. 외국인 순매수 거래대금 추출 (빈 문자열이면 0.0 반환)
-                    net_buy_amt = safe_float(today_data.get("frgn_ntby_tr_pbmn", 0))
-                    
-                    # 2. 거래대금 집계 전이거나 누락되었을 때 수량*현재가로 추산
-                    if net_buy_amt == 0.0:
-                        qty = safe_float(today_data.get("frgn_ntby_qty", 0))
-                        price = safe_float(today_data.get("stck_clpr", 0))
-                        net_buy_amt = qty * price
-                    
-                    # 3. 억 단위 변환
-                    return round(net_buy_amt / 100000000, 1)
-            else:
-                st.warning(f"⚠️ API 응답 에러: {data_json.get('msg1')}")
-        else:
-            st.warning(f"⚠️ HTTP 통신 에러: {res.status_code}")
+        # '투자자별 매매동향' 항목의 모든 <dd> 태그 탐색
+        for dd in soup.find_all('dd'):
+            text = dd.get_text(strip=True)
             
+            # "외국인"으로 시작하고 "억"이 포함된 텍스트 찾기 (예: "외국인-1,234억" 또는 "외국인1,234억")
+            if text.startswith("외국인") and "억" in text:
+                # 숫자만 추출하기 위해 불필요한 문자 제거
+                clean_str = text.replace("외국인", "").replace("억", "").replace(",", "").strip()
+                
+                # 추출된 문자열을 float으로 변환하여 반환 (억 단위)
+                return float(clean_str)
+                
     except Exception as e:
-        st.error(f"⚠️ 수급 데이터 수신 중 오류 발생: {e}")
+        # 스크래핑 중 에러가 발생해도 프로그램이 멈추지 않도록 방어
+        st.error(f"⚠️ 실시간 수급 스크래핑 오류: {e}")
         
     return 0.0
 @st.cache_data(ttl=60)
