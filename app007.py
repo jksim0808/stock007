@@ -146,16 +146,21 @@ def get_foreign_investor_trend():
             if data_json.get("rt_cd") == "0":
                 outputs = data_json.get("output", [])
                 if outputs:
-                    # 1. output 리스트의 첫 번째[0]가 '오늘' 데이터입니다.
                     today_data = outputs[0]
                     
-                    # 2. 외국인 순매수 거래대금 (매수-매도가 이미 계산된 값. 매도가 많으면 자동 음수)
-                    net_buy_amt = float(today_data.get("frgn_ntby_tr_pbmn", 0))
+                    # 🛡️ 빈 문자열("") 및 예기치 않은 문자를 방어하는 함수 도입
+                    def safe_float(val):
+                        if val in [None, "", " "]: return 0.0
+                        try: return float(val)
+                        except: return 0.0
                     
-                    # (만약 장 초반이라 대금 데이터가 안 잡히면 수량*현재가로 추산하는 백업 로직)
-                    if net_buy_amt == 0:
-                        qty = float(today_data.get("frgn_ntby_qty", 0))
-                        price = float(today_data.get("stck_clpr", 0))
+                    # 1. 외국인 순매수 거래대금 추출 (빈 문자열이면 0.0 반환)
+                    net_buy_amt = safe_float(today_data.get("frgn_ntby_tr_pbmn", 0))
+                    
+                    # 2. 거래대금 집계 전이거나 누락되었을 때 수량*현재가로 추산
+                    if net_buy_amt == 0.0:
+                        qty = safe_float(today_data.get("frgn_ntby_qty", 0))
+                        price = safe_float(today_data.get("stck_clpr", 0))
                         net_buy_amt = qty * price
                     
                     # 3. 억 단위 변환
